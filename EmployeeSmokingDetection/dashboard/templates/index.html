@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+  <h1>Overview</h1>
+
+  <section class="card">
+    <h2>Detections per employee</h2>
+    {% if summary %}
+    <table>
+      <thead><tr><th>Employee</th><th>Total detections</th><th>Last seen</th></tr></thead>
+      <tbody>
+        {% for row in summary %}
+        <tr>
+          <td>{{ row.employee_name }}</td>
+          <td>{{ row.total }}</td>
+          <td>{{ row.last_seen | int | timestamp }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">No detections logged yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Most recent events</h2>
+    {% if recent %}
+    <table>
+      <thead><tr><th>Time</th><th>Employee</th><th>Confidence</th><th>Snapshot</th></tr></thead>
+      <tbody>
+        {% for d in recent %}
+        <tr>
+          <td>{{ d.detected_at | int | timestamp }}</td>
+          <td>{{ d.employee_name }}</td>
+          <td>{{ "%.0f"|format(d.confidence * 100) }}%</td>
+          <td>
+            {% if d.snapshot_path %}
+              <a href="{{ url_for('snapshot', filename=d.snapshot_path.split('/')[-1]) }}" target="_blank">view</a>
+            {% else %}&mdash;{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">No detections logged yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

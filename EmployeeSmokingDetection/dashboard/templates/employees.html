@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Employees{% endblock %}
+{% block content %}
+  <h1>Enrolled employees</h1>
+  <section class="card">
+    {% if employees %}
+    <table>
+      <thead><tr><th>Name</th><th>Employee code</th><th>Enrolled</th></tr></thead>
+      <tbody>
+        {% for e in employees %}
+        <tr>
+          <td>{{ e.name }}</td>
+          <td>{{ e.employee_code or "—" }}</td>
+          <td>{{ e.created_at | int | timestamp }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">No employees enrolled yet. Run
+        <code>python scripts/register_employee.py --name "Jane Doe"</code> to add one.</p>
+    {% endif %}
+  </section>
+{% endblock %}

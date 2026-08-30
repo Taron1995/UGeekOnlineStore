@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+*.egg-info/
+
+# Generated data / models / logs (large binaries, per-deployment; never commit)
+data/raw/**/*.jpg
+data/raw/**/*.jpeg
+data/raw/**/*.png
+data/split/
+models/*.keras
+models/*.yml
+models/enrollment_samples/
+logs/*.db
+logs/snapshots/
+logs/training/
+
+!.gitkeep

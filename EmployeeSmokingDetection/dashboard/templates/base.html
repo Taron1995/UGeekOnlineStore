@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Smoking Detection Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav class="topnav">
+    <span class="brand">🚭 Employee Smoking Detection</span>
+    <a href="{{ url_for('index') }}">Overview</a>
+    <a href="{{ url_for('employees') }}">Employees</a>
+    <a href="{{ url_for('history') }}">Full History</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

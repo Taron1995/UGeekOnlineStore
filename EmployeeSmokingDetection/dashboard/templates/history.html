@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Full history{% endblock %}
+{% block content %}
+  <h1>Full detection history</h1>
+  <section class="card">
+    {% if detections %}
+    <table>
+      <thead><tr><th>Time</th><th>Employee</th><th>Confidence</th><th>Snapshot</th></tr></thead>
+      <tbody>
+        {% for d in detections %}
+        <tr>
+          <td>{{ d.detected_at | int | timestamp }}</td>
+          <td>{{ d.employee_name }}</td>
+          <td>{{ "%.0f"|format(d.confidence * 100) }}%</td>
+          <td>
+            {% if d.snapshot_path %}
+              <a href="{{ url_for('snapshot', filename=d.snapshot_path.split('/')[-1]) }}" target="_blank">view</a>
+            {% else %}&mdash;{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="empty">No detections logged yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

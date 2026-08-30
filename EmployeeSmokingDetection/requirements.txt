@@ -1,0 +1,12 @@
+# opencv-contrib-python includes cv2.face (LBPH recognizer) used for employee
+# identification; do not also install plain opencv-python, they conflict.
+tensorflow>=2.18,<2.20
+opencv-contrib-python>=4.9
+numpy>=2.0,<2.2
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+pandas>=2.2
+Flask>=3.0
+Pillow>=10.2
+tqdm>=4.66
