@@ -1,0 +1,14 @@
+opencv-python-headless>=4.9
+numpy>=1.26,<2.3
+supervision>=0.25,<0.31   # ByteTrack deprecated с 0.28, удалён в 0.31
+rfdetr>=1.0
+mediapipe>=0.10.14
+onnxruntime>=1.18          # GPU: onnxruntime-gpu; Intel: onnxruntime-openvino
+pillow>=10
+pyyaml>=6
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2
+pytest>=8

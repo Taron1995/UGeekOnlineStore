@@ -1,0 +1,44 @@
+timezone: Asia/Yerevan
+db_url: postgresql+psycopg://monitor:monitor@localhost:5432/monitor   # переопределяется DATABASE_URL
+clips_dir: clips
+
+# Установленные перерывы: события в них не считаются нарушениями
+breaks:
+  - {start: "09:40", end: "10:00"}
+  - {start: "13:00", end: "14:00"}   # обед
+  - {start: "15:40", end: "16:00"}
+
+shifts:
+  - {name: day,   start: "08:00", end: "17:00"}
+  - {name: night, start: "20:00", end: "05:00"}
+
+detector:
+  backend: rfdetr          # rfdetr (PyTorch) | onnx (ONNX Runtime / OpenVINO)
+  size: small              # small | medium
+  weights: null            # путь к дообученным весам (training/train.py)
+  onnx_path: null          # models/rfdetr_small.onnx
+  providers: [CUDAExecutionProvider, CPUExecutionProvider]   # или OpenVINOExecutionProvider
+  classes: {person: 1, phone: 77, workpiece: 100}            # подставьте id из своей модели
+
+thresholds:
+  process_fps: 5
+  absence_after_s: 30
+  phone_after_s: 3
+  meeting_after_s: 60
+  sit_still_after_s: 120
+
+cameras:
+  - id: cam1
+    source: video/shop_cam1.mp4          # файл или rtsp://user:pass@host/stream
+    start_time: "2026-10-06T08:00:00+04:00"   # только для файла
+    roi: null                            # [x1, y1, x2, y2], если нужно кропнуть кадр
+    gathering_zones: []                  # полигоны, где собираться разрешено (комната отдыха и т.п.)
+    workplaces:
+      - id: WP-01
+        station_zone: [[100, 300], [500, 300], [500, 700], [100, 700]]   # полигон «у станка»
+        machine_roi:  [[150, 320], [450, 320], [450, 500], [150, 500]]   # область, где видно работу станка
+        piece_line:   [[520, 400], [520, 600]]                           # линия выхода заготовок
+      - id: WP-02
+        station_zone: [[600, 300], [1000, 300], [1000, 700], [600, 700]]
+        machine_roi:  [[650, 320], [950, 320], [950, 500], [650, 500]]
+        piece_line:   [[1020, 400], [1020, 600]]
