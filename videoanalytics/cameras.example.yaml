@@ -1,23 +1,64 @@
-# Coordinates are normalized to the frame: x 0..1 (left->right), y 0..1 (top->bottom).
-# Run `python -m videoanalytics snap ...` to get a snapshot per camera with a grid to read them off.
+# Coordinates are normalised to the frame: x 0..1 (left -> right), y 0..1 (top -> bottom).
+# `python -m videoanalytics snap ...` writes one snapshot per camera with a 10 % grid, so you can read the numbers off.
+# Camera names must appear as a whole word in the file path (cam1_2026....mp4, /cam1/).
+# Every key is checked on start: a typo is reported, not silently ignored.
+
 options:
-  fps: 3                    # frames per second that are analysed (source can be 25 fps)
-  conf: 0.35                # person confidence
-  active_hours: [[8, 20]]   # optional: only analyse these hours of the day (wall-clock of the recording)
-  gate_motion: 0.0005       # skip the detector in a still scene (share of changed pixels); keepalive_s forces a check
+  fps: 3                        # analysed frames per second (the recordings can be 25 fps)
+  conf: 0.35                    # person confidence
+  active_hours: [[8, 20]]       # optional: analyse only these hours of the day
+  gate_motion: 0.0005           # skip the person detector in a still scene; keepalive_s forces a check
   keepalive_s: 3
-  clips: true
+  clips: true                   # save a frame + a short clip for machine changes, gatherings, inactivity
   max_clips_per_file: 10
+
+# Work hours and breaks: the report counts a station as "absent" only inside work hours, outside breaks.
+# Can also be set per camera or per zone (key `schedule:` there).
+schedule:
+  work: [["08:00", "12:00"], ["13:00", "17:00"]]
+  breaks: [["10:00", "10:15"], ["15:00", "15:15"]]
+  days: [1, 2, 3, 4, 5]         # Monday = 1
+
 cameras:
-  cam1:                     # name is searched in the file path as a whole word: cam1_2026..., /cam1/...
-    # match: "ch0?1|channel_1"   # optional regex on the relative path instead of the name
+  cam1:                         # machine hall: lathe with a signal lamp (green / yellow / red)
     zones:
-      - {name: station_A, polygon: [[0.1,0.3],[0.5,0.3],[0.5,0.9],[0.1,0.9]]}
-    lines:                  # people counting; "in" = crossing from the right side to the left side of p1->p2
-      - {name: door, p1: [0.2,0.6], p2: [0.8,0.6]}
-    machine: {polygon: [[0.5,0.2],[0.9,0.2],[0.9,0.8],[0.5,0.8]], motion_thr: 0.02, window_s: 10}
-  cam2: {machine: {polygon: [[0.2,0.2],[0.8,0.2],[0.8,0.8],[0.2,0.8]]}}
-  cam3: {}
-  cam4: {}
-  cam5: {}
-  cam6: {}
+      - {name: lathe1_area, kind: workstation, polygon: [[0.10, 0.30], [0.55, 0.30], [0.55, 0.95], [0.10, 0.95]]}
+      - {name: rest_corner, kind: rest, polygon: [[0.70, 0.55], [0.98, 0.55], [0.98, 0.98], [0.70, 0.98]]}
+    lines:                      # people counting; `in` = crossing from the right to the left side of p1 -> p2
+      - {name: door, p1: [0.60, 0.05], p2: [0.60, 0.50]}
+    machines:
+      - name: lathe1
+        source: lamp
+        roi: [[0.80, 0.18], [0.84, 0.18], [0.84, 0.30], [0.80, 0.30]]   # tight polygon around the lamp stack
+        zone: lathe1_area       # operator zone: the report shows work without an operator
+        work_colors: [green]    # which colours mean "working"; red / yellow time is reported separately
+        cycle: {min_work_s: 3, min_idle_s: 1}                          # optional: count green segments as cycles
+    gathering: {min_people: 2, dist_k: 1.0, min_duration_s: 180, gap_s: 10}
+
+  cam2:                         # milling machine without a lamp: motion in its working part (spindle / table)
+    fps: 5                      # this camera needs more frames per second to resolve short cycles
+    zones:
+      - {name: mill1_area, kind: workstation, polygon: [[0.15, 0.25], [0.60, 0.25], [0.60, 0.95], [0.15, 0.95]]}
+    machines:
+      - name: mill1
+        source: motion
+        roi: [[0.40, 0.35], [0.58, 0.35], [0.58, 0.70], [0.40, 0.70]]
+        motion_thr: 0.02        # share of changed pixels in the ROI that counts as "moving"
+        window_s: 10
+        zone: mill1_area
+        cycle: {window_s: 2, min_work_s: 3, min_idle_s: 1}             # motion -> stop = one machining
+    inactivity:                 # person who hardly moves (default method: frame difference, see README for `pose`)
+      method: motion
+      zones: [mill1_area]
+      min_duration_s: 300
+
+  cam3:                         # conveyor exit: count workpieces with an RF-DETR model trained on your parts
+    fps: 5
+    workpieces:
+      weights: models/workpiece.pth     # checkpoint from `python -m videoanalytics train`
+      classes: [workpiece]
+      threshold: 0.5
+      line: {name: exit, p1: [0.70, 0.10], p2: [0.70, 0.90]}
+      count: out                # in | out | both
+
+  cam4: {}                      # people counting only

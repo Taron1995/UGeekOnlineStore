@@ -1,85 +1,35 @@
-"""Per-file processing: decode (sampled) -> motion gate -> detect -> track -> zones/lines/machine -> events."""
+"""Per-file processing: decode (sampled) -> motion gate -> detect -> track -> analyzers -> events and per-minute tables."""
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 
+from .analyzers import Ctx, build_analyzers
+from .config import DEFAULTS, normalize_camera
 from .storage import write_shard
 from .tracker import Tracker
-from .zones import Line, MachineState, Motion, Zone
-
-DEFAULTS = dict(fps=3.0, conf=0.35, min_hits=2, iou_thr=0.2, max_lost_s=2.0, gate_motion=0.0005, keepalive_s=3.0,
-                clips=True, max_clips_per_file=10, clip_pad_s=5.0, active_hours=None, hw_decode=False)
+from .video import active_intervals, fmt_ts, open_capture, save_clip  # noqa: F401  (re-exported)
+from .zones import Motion, Zone
 
 
-def fmt_ts(ts: float, f: str = "%Y%m%d_%H%M%S") -> str:
-    return datetime.fromtimestamp(ts, timezone.utc).strftime(f)
-
-
-def active_intervals(start_ts: float, duration: float, hours):
-    """File-relative [a, b) second ranges that fall inside the daily hour ranges, e.g. [[8, 20]] or [[20, 6]]."""
-    if not hours:
-        return [(0.0, duration)]
-    ranges = []
-    for h1, h2 in hours:
-        ranges += [(h1, 24), (0, h2)] if h2 <= h1 else [(h1, h2)]
-    end_ts, out = start_ts + duration, []
-    for day in range(int(start_ts // 86400), int(end_ts // 86400) + 1):
-        for h1, h2 in ranges:
-            a, b = max(start_ts, day * 86400 + h1 * 3600), min(end_ts, day * 86400 + h2 * 3600)
-            if b > a:
-                out.append((a - start_ts, b - start_ts))
-    merged = []
-    for a, b in sorted(out):  # e.g. 22-24 and 00-06 touch at midnight: one pass, no tracker reset
-        if merged and a <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
-        else:
-            merged.append((a, b))
-    return merged
-
-
-def open_capture(path: str, hw: bool = False):
-    if hw:  # D3D11VA/VAAPI if the OpenCV build has it; silently falls back to software
-        cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY])
-        if cap.isOpened():
-            return cap
-    return cv2.VideoCapture(path)
-
-
-def save_clip(path: str, t_rel: float, out_path: Path, pad: float, hw: bool = False):
-    cap = open_capture(path, hw)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    fps = fps if 1 <= fps <= 120 else 25.0
-    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_rel - pad) * 1000)
-    out = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-    for _ in range(int(2 * pad * fps)):
-        ok, f = cap.read()
-        if not ok:
-            break
-        out.write(f)
-    out.release()
-    cap.release()
-
-
-def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None = None, limit_s: float | None = None):
-    """src: {camera, path, rel, start_ts, duration}. detect(frame) -> [(x1,y1,x2,y2,score)].
-    Returns (events, minutes, meta). events: (ts, type, subject, value, clip, thumb)."""
+def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None = None, limit_s: float | None = None,
+                  pose=None, workpiece_detect=None):
+    """src: {camera, path, rel, start_ts, duration}. detect(frame) -> [(x1,y1,x2,y2,score)] persons.
+    Returns (events, tables, meta); events: (ts, type, subject, value, clip, thumb)."""
     t0 = time.time()
+    cam = normalize_camera(cam)
     cap = open_capture(src["path"], opts["hw_decode"])
     if not cap.isOpened():
         raise OSError(f"cannot open {src['path']}")
     src_fps = cap.get(cv2.CAP_PROP_FPS)
     src_fps = src_fps if 1 <= src_fps <= 120 else 25.0
-    step = max(1, round(src_fps / opts["fps"]))
+    fps_proc = float(cam.get("fps") or opts["fps"])  # a camera can ask for more frames (e.g. cycle counting)
+    step = max(1, round(src_fps / fps_proc))
     dt = step / src_fps
-    zones = [Zone(z["name"], z["polygon"], z.get("kind", "workstation")) for z in cam.get("zones") or []]
-    mcfg = cam.get("machine")
-    roi = Zone("machine", mcfg["polygon"]) if mcfg else None
-    events, minutes, n_clips = [], {}, 0
+    zones = [Zone(z["name"], z["polygon"], z.get("kind", "workstation"), z.get("hold_s", 5.0)) for z in cam.get("zones") or []]
+    ctx = Ctx(src, cam, opts, out_dir)
     st = dict(frames=0, det_frames=0, processed_s=0.0)
 
     for a, b in active_intervals(src["start_ts"], src["duration"], opts["active_hours"]):
@@ -88,13 +38,11 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
         if a > 0:
             cap.set(cv2.CAP_PROP_POS_MSEC, a * 1000.0)
         fi = int(round(cap.get(cv2.CAP_PROP_POS_FRAMES)))
-        lines = [Line(l["name"], l["p1"], l["p2"]) for l in cam.get("lines") or []]  # fresh per pass: track ids restart
+        tracker = Tracker(opts["iou_thr"], max(2, int(opts["max_lost_s"] * fps_proc)), opts["min_hits"])
         motion = Motion()
-        tracker = Tracker(opts["iou_thr"], max(2, int(opts["max_lost_s"] * opts["fps"])), opts["min_hits"])
-        mstate = MachineState(**{k: mcfg[k] for k in ("motion_thr", "window_s", "on_frac", "off_frac") if k in mcfg}) \
-            if roi else None
-        seen, in_zone, last_det, t_rel = set(), {}, -1e9, a
-        warm_until = a + (mstate.window_s if mstate else 0)  # machine state is not trusted until its window has filled
+        analyzers = build_analyzers(cam, zones, pose, workpiece_detect, fps_proc)  # fresh per pass: ids and windows restart
+        ctx.t_start, ctx.motion, ctx.occupied, ctx.zone_counts = a, motion, {}, {}
+        seen, last_det, t_rel = set(), -1e9, a
         while limit_s is None or st["processed_s"] < limit_s:
             if not cap.grab():
                 break
@@ -107,70 +55,43 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
             ok, frame = cap.retrieve()
             if not ok:
                 continue
-            h, w = frame.shape[:2]
-            abs_t = src["start_ts"] + t_rel
+            ctx.frame, ctx.t, ctx.abs_t, ctx.dt = frame, t_rel, src["start_ts"] + t_rel, dt
+            ctx.h, ctx.w = frame.shape[:2]
             fm = motion.step(frame)
             detected = 0
             if fm > opts["gate_motion"] or tracker.tracks or t_rel - last_det >= opts["keepalive_s"]:
-                tracks = tracker.update(detect(frame))
+                ctx.tracks = tracker.update(detect(frame))
                 last_det, detected = t_rel, 1
             else:
-                tracks = []  # quiet scene and nobody tracked: skip the expensive detector
-            for tr in tracks:
+                ctx.tracks = []  # quiet scene and nobody tracked: skip the expensive detector
+            ctx.alive = {t.id for t in tracker.tracks}
+            for tr in ctx.tracks:
                 if tr.id not in seen:
                     seen.add(tr.id)
-                    events.append((abs_t, "person_appeared", f"t{tr.id}", "", "", ""))
-                for z in zones:
-                    key, inside = (tr.id, z.name), z.contains(*tr.pt, w, h)
-                    if inside and key not in in_zone:
-                        in_zone[key] = t_rel
-                        events.append((abs_t, "zone_enter", f"t{tr.id}", z.name, "", ""))
-                    elif not inside and key in in_zone:
-                        events.append((abs_t, "zone_exit", f"t{tr.id}", f"{z.name} dwell={t_rel - in_zone.pop(key):.0f}s", "", ""))
-                for ln in lines:
-                    d = ln.update(tr.id, tr.pt, w, h)
-                    if d:
-                        events.append((abs_t, "line_cross", f"t{tr.id}", f"{ln.name}:{d}", "", ""))
-            alive = {t.id for t in tracker.tracks}
-            for key in [k for k in in_zone if k[0] not in alive]:
-                events.append((abs_t, "zone_exit", f"t{key[0]}", f"{key[1]} dwell={t_rel - in_zone.pop(key):.0f}s", "", ""))
-
-            state = None
-            if mstate:
-                ratio = motion.roi_ratio(roi, [t.box for t in tracks], (h, w))
-                state, changed = mstate.update(ratio, t_rel)
-                if t_rel < warm_until:
-                    state, changed = None, False
-                if changed:
-                    clip = thumb = ""
-                    if opts["clips"] and out_dir is not None and n_clips < opts["max_clips_per_file"]:
-                        n_clips += 1
-                        base = f"clips/{src['camera']}/{fmt_ts(abs_t)}_{state}"
-                        (out_dir / base).parent.mkdir(parents=True, exist_ok=True)
-                        cv2.imwrite(str(out_dir / (base + ".jpg")), cv2.resize(frame, (480, max(1, int(h * 480 / w)))))
-                        save_clip(src["path"], t_rel, out_dir / (base + ".mp4"), opts["clip_pad_s"], opts["hw_decode"])
-                        clip, thumb = base + ".mp4", base + ".jpg"
-                    events.append((abs_t, "machine_state", "machine", state, clip, thumb))
-            row = minutes.setdefault(int(abs_t // 60), [0.0, 0.0, 0, 0.0, 0.0, 0])
+                    ctx.emit("person_appeared", f"t{tr.id}")
+            for az in analyzers:
+                az.update(ctx)
+            row = ctx.minutes.setdefault(ctx.minute(), [0.0, 0.0, 0, 0])
             row[0] += dt
-            row[1] += dt * len(tracks)
-            row[2] = max(row[2], len(tracks))
-            if state:
-                row[3 if state == "work" else 4] += dt
-            row[5] += detected
+            row[1] += dt * len(ctx.tracks)
+            row[2] = max(row[2], len(ctx.tracks))
+            row[3] += detected
             st["frames"] += 1
             st["det_frames"] += detected
             st["processed_s"] += dt
-        for key in list(in_zone):
-            events.append((src["start_ts"] + t_rel, "zone_exit", f"t{key[0]}", f"{key[1]} dwell={t_rel - in_zone.pop(key):.0f}s", "", ""))
+        ctx.t, ctx.abs_t = t_rel, src["start_ts"] + t_rel
+        for az in analyzers:
+            az.finish(ctx)
     cap.release()
     meta = dict(camera=src["camera"], source=src["rel"], start_ts=src["start_ts"], video_s=src["duration"],
                 processed_s=round(st["processed_s"], 1), frames=st["frames"], det_frames=st["det_frames"],
                 elapsed_s=round(time.time() - t0, 2))
-    return events, minutes, meta
+    tables = dict(minutes=ctx.minutes, zone_minutes=ctx.zone_minutes, machine_minutes=ctx.machine_minutes)
+    return ctx.events, tables, meta
 
 
 _DET = None
+_CACHE: dict = {}
 
 
 def init_worker(model: str, conf: float):
@@ -179,11 +100,31 @@ def init_worker(model: str, conf: float):
     _DET = PersonDetector(model, conf=conf, threads=1)
 
 
+def _extras(cam: dict):
+    """Heavy optional models are created once per worker process and only for cameras that ask for them."""
+    pose = wp = None
+    ina, w = cam.get("inactivity"), cam.get("workpieces")
+    if ina is not None and ina.get("method", "motion") == "pose":
+        from .inactivity import PoseBackend
+        pose = _CACHE.setdefault(("pose", ina.get("pose_model")), PoseBackend(ina.get("pose_model")))
+    if w is not None:
+        from .workpieces import RFDETRDetector
+        key = ("rfdetr", w.get("weights"), w.get("model", "nano"), tuple(w.get("classes") or ()), w.get("threshold", 0.5))
+        if key not in _CACHE:
+            _CACHE[key] = RFDETRDetector(w.get("weights"), w.get("model", "nano"), w.get("classes"), w.get("threshold", 0.5),
+                                         w.get("device"), bool(w.get("trust_checkpoint", False)))
+        wp = _CACHE[key].detect
+    return pose, wp
+
+
 def run_task(task: dict) -> dict:
     """Pool entry point. Never raises: a corrupt file must not stop a multi-day run."""
     try:
-        events, minutes, meta = process_video(task["src"], task["cam"], task["opts"], _DET.detect, Path(task["out"]))
-        write_shard(Path(task["shard"]), events, minutes, meta)
+        cam = normalize_camera(task["cam"])
+        pose, wp = _extras(cam)
+        events, tables, meta = process_video(task["src"], cam, task["opts"], _DET.detect, Path(task["out"]),
+                                             pose=pose, workpiece_detect=wp)
+        write_shard(Path(task["shard"]), events, tables, meta)
         return dict(ok=True, **meta)
     except Exception as e:  # noqa: BLE001
         return dict(ok=False, source=task["src"]["rel"], error=repr(e))

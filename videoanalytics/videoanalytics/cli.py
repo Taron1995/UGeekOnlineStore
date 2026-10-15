@@ -1,4 +1,4 @@
-"""vidan scan | run | report | snap  -  see README.md"""
+"""python -m videoanalytics scan | snap | run | report | models | frames | split-coco | train | probe  -  see README.md"""
 from __future__ import annotations
 
 import argparse
@@ -11,19 +11,29 @@ from pathlib import Path
 import yaml
 
 from . import pipeline
-from .pipeline import DEFAULTS, active_intervals, fmt_ts
+from .config import DEFAULTS, ConfigError, check_config, normalize_camera
+from .report import write_reports
 from .sources import discover
 from .storage import clean_stale, merge_shards, shard_path
-from .report import write_reports
-from .tools import snapshot
+from .tools import extract_frames, fetch_models, probe_activity, snapshot, split_coco
+from .video import active_intervals, fmt_ts
 
 
 def parse_hours(s: str):
     return [[int(a), int(b)] for a, b in (r.split("-") for r in s.split(","))]
 
 
+def read_config(path: str) -> dict:
+    cfg = yaml.safe_load(open(path, encoding="utf-8"))
+    try:
+        check_config(cfg)
+    except ConfigError as e:
+        raise SystemExit(f"{path}: {e}")
+    return cfg
+
+
 def load(a):
-    cfg = yaml.safe_load(open(a.config, encoding="utf-8"))
+    cfg = read_config(a.config)
     opts = {**DEFAULTS, **(cfg.get("options") or {})}
     for k in ("fps", "conf"):
         if getattr(a, k, None) is not None:
@@ -36,8 +46,7 @@ def load(a):
         opts["clips"] = False
     if getattr(a, "hw_decode", False):
         opts["hw_decode"] = True
-    cams = cfg["cameras"]
-    return cfg, opts, cams
+    return cfg, opts, {k: normalize_camera(v) for k, v in cfg["cameras"].items()}
 
 
 def sources(a, cams):
@@ -58,6 +67,17 @@ def print_issues(issues):
               f"e.g. {issues['no_timestamp'][:3]}  (use --time-regex to fix)")
 
 
+def features(cam: dict) -> str:
+    f = []
+    if cam.get("zones"):
+        f.append(f"{len(cam['zones'])} zone(s)")
+    if cam.get("lines"):
+        f.append("lines")
+    f += [f"machine:{m['name']}({m['source']})" for m in cam["machines"]]
+    f += [k for k in ("gathering", "inactivity", "workpieces") if k in cam]
+    return ", ".join(f) or "people only"
+
+
 def cmd_scan(a):
     cfg, opts, cams = load(a)
     srcs, issues = sources(a, cams)
@@ -68,11 +88,12 @@ def cmd_scan(a):
         p[1] += s["duration"]
         p[2], p[3] = min(p[2], s["start_ts"]), max(p[3], s["start_ts"] + s["duration"])
         p[4] += sum(y - x for x, y in active_intervals(s["start_ts"], s["duration"], opts["active_hours"]))
-    print(f"{'camera':10} {'files':>6} {'video h':>9} {'to process h':>13}  period")
+    print(f"{'camera':10} {'files':>6} {'video h':>9} {'to process h':>13}  period / features")
     for cam in cams:
         if cam in per:
             n, d, t0, t1, act = per[cam]
-            print(f"{cam:10} {n:6d} {d / 3600:9.1f} {act / 3600:13.1f}  {fmt_ts(t0, '%Y-%m-%d %H:%M')} -> {fmt_ts(t1, '%Y-%m-%d %H:%M')}")
+            print(f"{cam:10} {n:6d} {d / 3600:9.1f} {act / 3600:13.1f}  {fmt_ts(t0, '%Y-%m-%d %H:%M')} -> {fmt_ts(t1, '%Y-%m-%d %H:%M')}"
+                  f"\n{'':44}{features(cams[cam])}")
         else:
             print(f"{cam:10} {'-':>6}  (no files found)")
     print_issues(issues)
@@ -81,14 +102,15 @@ def cmd_scan(a):
         det = PersonDetector(a.model, conf=opts["conf"], threads=1)
         s = srcs[len(srcs) // 2]
         bench_opts = {**opts, "gate_motion": -1.0, "clips": False}
-        _, _, meta = pipeline.process_video(s, cams[s["camera"]], bench_opts, det.detect, None, limit_s=a.bench_seconds)
+        pose, wp = pipeline._extras(cams[s["camera"]])
+        _, _, meta = pipeline.process_video(s, cams[s["camera"]], bench_opts, det.detect, None, limit_s=a.bench_seconds, pose=pose, workpiece_detect=wp)
         cost = meta["elapsed_s"] / max(1e-6, meta["processed_s"])
         total = sum(p[4] for p in per.values())
         w = a.workers or os.cpu_count() or 1
         print(f"\nBenchmark on {s['rel']}: {meta['processed_s']:.0f} s of video in {meta['elapsed_s']:.1f} s "
-              f"= {cost:.2f} CPU-s per video-s (decode + detector every frame, no motion gate, 1 thread)")
+              f"= {cost:.2f} CPU-s per video-s (decode + detector every frame, no motion gate, 1 thread, all analyzers of that camera)")
         print(f"Upper-bound estimate for {total / 3600:.0f} h of video with {w} worker(s): ~{total * cost / w / 3600:.1f} h wall-clock "
-              f"(the motion gate usually brings this down; real speed-up depends on how empty the scenes are)")
+              f"(cameras with workpiece counting / pose are slower than the one measured if it had none; the motion gate usually brings this down)")
 
 
 def cmd_run(a):
@@ -111,6 +133,9 @@ def cmd_run(a):
         tasks = tasks[: a.limit_files]
     w = min(a.workers or os.cpu_count() or 1, max(1, len(tasks)))
     print(f"{len(tasks)} file(s) to process ({done} already done, skipped), {w} worker(s), {opts['fps']} fps")
+    if w > 2 and any("workpieces" in t["cam"] for t in tasks):
+        print("! workpiece counting runs RF-DETR on PyTorch (all cores per process, ~1 GB RAM each): for those cameras use "
+              "--camera camN --workers 1 (or 2) and run the other cameras separately")
     errors, t0 = [], time.time()
     if tasks:
         with mp.get_context("spawn").Pool(w, pipeline.init_worker, (a.model, opts["conf"])) as pool:
@@ -132,8 +157,11 @@ def cmd_run(a):
 def cmd_report(a):
     out = Path(a.out)
     merge_shards(out)
-    p = write_reports(out, a.idle_min * 60)
-    print(f"Report: {p}  (+ hourly.csv, events.csv, idle_periods.csv, analytics.db)")
+    cfg = read_config(a.config) if getattr(a, "config", None) else None
+    p = write_reports(out, a.idle_min * 60, cfg)
+    print(f"Report: {p}  (+ hourly.csv, machines_hourly.csv, stations_daily.csv, absences.csv, idle_periods.csv, events.csv, analytics.db)")
+    if cfg is None:
+        print("note: pass --config to include the work schedule (absence outside breaks) and zone kinds")
 
 
 def cmd_snap(a):
@@ -150,8 +178,72 @@ def cmd_snap(a):
         print(f"{p}  <- {s['rel']}")
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="vidan", description="Offline video analytics (people + machine activity)")
+def cmd_models(a):
+    names = ["yolox_tiny.onnx"] + (["yolox_s.onnx"] if a.yolox_s else []) + (["pose_landmarker_lite.task"] if a.pose else []) \
+        + (["pose_landmarker_full.task"] if a.pose_full else [])
+    fetch_models(names, a.dest)
+    print("RF-DETR weights are downloaded by the rfdetr package on first use (~/.roboflow/models); copy that folder for offline machines.")
+
+
+def cmd_frames(a):
+    cfg, opts, cams = load(a)
+    srcs, issues = sources(a, cams)
+    print_issues(issues)
+    n = extract_frames(srcs, a.out, a.count, parse_hours(a.hours) if a.hours else opts["active_hours"], a.seed)
+    print(f"{n} frame(s) saved to {a.out}  (annotate them in CVAT / Label Studio / Roboflow, export COCO, then: split-coco)")
+
+
+def cmd_split(a):
+    print(split_coco(a.images, a.annotations, a.out, a.valid, a.test, a.seed), f"-> {a.out}")
+
+
+def cmd_train(a):
+    try:
+        import rfdetr
+    except ImportError:
+        raise SystemExit('training needs: pip install "rfdetr[train]"  (PyTorch; a GPU is strongly recommended)')
+    from .workpieces import SIZES
+    model = getattr(rfdetr, SIZES[a.model])(**({"device": a.device} if a.device else {}))
+    model.train(dataset_dir=a.dataset, epochs=a.epochs, batch_size=a.batch_size, grad_accum_steps=a.grad_accum, lr=a.lr,
+                output_dir=a.out, num_workers=a.workers)
+    out = Path(a.out)
+    print(f"checkpoints written: {sorted(c.name for c in out.glob('*.pth')) + sorted(c.name for c in out.glob('*.ckpt'))}")
+    cands = [out / n for n in ("checkpoint_best_total.pth", "last_ema.pth") if (out / n).exists()]
+    best, best_f1 = None, -1.0
+    try:
+        from .workpieces import RFDETRDetector, evaluate_detector
+        print(f"\nchecking the candidates on your validation images (confidence >= 0.5, IoU >= 0.5):")
+        for c in cands:
+            det = RFDETRDetector(str(c), threshold=0.5, device=a.device)
+            r = evaluate_detector(det.detect, a.dataset)
+            print(f"  {c.name:28} recall {100 * r['recall']:3.0f}%  precision {100 * r['precision']:3.0f}%  ({r['parts']} annotated parts in {r['images']} images)")
+            if r["f1"] > best_f1 + 1e-9:
+                best, best_f1 = c, r["f1"]
+    except Exception as e:  # noqa: BLE001  the check is a safety net, never a reason to lose a finished training
+        print(f"(checkpoint check skipped: {e!r})")
+        best = cands[0] if cands else None
+    if best is not None:
+        print(f"\nrecommended: {best.name}  ->  cameras.yaml:  workpieces: {{weights: {best}, classes: [<your class>], line: ...}}")
+        if best.name != "checkpoint_best_total.pth":
+            print("note: the 'best' checkpoint is chosen by validation mAP, which can saturate early on a small dataset and pick a barely trained epoch")
+
+
+def cmd_probe(a):
+    from .detector import PersonDetector
+    cfg, opts, cams = load(a)
+    srcs, _ = sources(a, cams)
+    srcs = [s for s in srcs if s["camera"] == a.camera[0]] if a.camera else srcs
+    if not srcs:
+        raise SystemExit("no matching video")
+    pose = None
+    if a.method == "pose":
+        from .inactivity import PoseBackend
+        pose = PoseBackend(a.pose_model)
+    probe_activity(srcs[0], cams[srcs[0]["camera"]], PersonDetector(a.model, conf=opts["conf"]).detect, a.method, pose, a.start, a.seconds)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="videoanalytics", description="Offline video analytics for CCTV footage")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p, videos=True):
@@ -188,15 +280,60 @@ def main():
 
     p = sub.add_parser("report", help="rebuild the report from finished files")
     p.add_argument("--out", default="out")
+    p.add_argument("--config", help="adds work schedule / zone kinds (absence outside breaks)")
     p.add_argument("--idle-min", type=float, default=5)
     p.set_defaults(f=cmd_report)
 
-    p = sub.add_parser("snap", help="one snapshot per camera with a coordinate grid and the configured zones")
+    p = sub.add_parser("snap", help="one snapshot per camera with a coordinate grid, the configured zones and lamp readout")
     common(p)
     p.add_argument("--at", type=float, default=30, help="second of the file to grab")
     p.set_defaults(f=cmd_snap)
 
-    a = ap.parse_args()
+    p = sub.add_parser("models", help="download the ONNX / pose models into models/")
+    p.add_argument("--dest", default="models")
+    p.add_argument("--pose", action="store_true", help="MediaPipe pose_landmarker_lite.task (inactivity.method: pose)")
+    p.add_argument("--pose-full", action="store_true")
+    p.add_argument("--yolox-s", action="store_true", help="larger, more accurate person detector (3.5x slower)")
+    p.set_defaults(f=cmd_models)
+
+    p = sub.add_parser("frames", help="extract frames spread over all footage for annotating (workpiece detector training)")
+    common(p)
+    p.add_argument("--count", type=int, default=300)
+    p.add_argument("--hours")
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(f=cmd_frames, out="dataset/raw")
+
+    p = sub.add_parser("split-coco", help="split one COCO export into train/valid/test folders for RF-DETR")
+    p.add_argument("--images", required=True)
+    p.add_argument("--annotations", required=True)
+    p.add_argument("--out", default="dataset")
+    p.add_argument("--valid", type=float, default=0.15)
+    p.add_argument("--test", type=float, default=0.05)
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(f=cmd_split)
+
+    p = sub.add_parser("train", help="fine-tune RF-DETR on your annotated dataset (needs rfdetr[train]; use a GPU)")
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--model", choices=["nano", "small", "medium", "large"], default="nano")
+    p.add_argument("--epochs", type=int, default=50)
+    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--workers", type=int, default=2)
+    p.add_argument("--device")
+    p.add_argument("--out", default="output")
+    p.set_defaults(f=cmd_train)
+
+    p = sub.add_parser("probe", help="print the activity the inactivity method measures for each person (to choose motion_thr)")
+    common(p)
+    p.add_argument("--model", required=True, help="YOLOX onnx for the person detector")
+    p.add_argument("--method", choices=["motion", "pose"], default="motion")
+    p.add_argument("--pose-model")
+    p.add_argument("--start", type=float, default=60, help="seconds into the first file")
+    p.add_argument("--seconds", type=float, default=120)
+    p.set_defaults(f=cmd_probe)
+
+    a = ap.parse_args(argv)
     a.f(a)
 
 

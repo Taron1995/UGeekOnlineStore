@@ -9,8 +9,8 @@ import numpy as np
 
 
 class Zone:
-    def __init__(self, name: str, polygon: list[list[float]], kind: str = "workstation"):
-        self.name, self.kind = name, kind
+    def __init__(self, name: str, polygon: list[list[float]], kind: str = "workstation", hold_s: float = 5.0):
+        self.name, self.kind, self.hold_s = name, kind, hold_s  # hold_s: occupancy bridges detection gaps this long
         self.poly = np.array(polygon, np.float32)
 
     def contains(self, x: float, y: float, w: int, h: int) -> bool:

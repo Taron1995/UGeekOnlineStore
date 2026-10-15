@@ -6,16 +6,23 @@ import os
 import sqlite3
 from pathlib import Path
 
+SCHEMA_VERSION = "2"
 SHARD_SCHEMA = """
 CREATE TABLE events(ts REAL, type TEXT, subject TEXT, value TEXT, clip TEXT, thumb TEXT);
-CREATE TABLE minutes(minute INTEGER PRIMARY KEY, covered_s REAL, people_s REAL, people_max INTEGER,
-                     work_s REAL, idle_s REAL, det_frames INTEGER);
+CREATE TABLE minutes(minute INTEGER PRIMARY KEY, covered_s REAL, people_s REAL, people_max INTEGER, det_frames INTEGER);
+CREATE TABLE zone_minutes(zone TEXT, minute INTEGER, covered_s REAL, occupied_s REAL, people_s REAL, PRIMARY KEY(zone, minute));
+CREATE TABLE machine_minutes(machine TEXT, minute INTEGER, work_s REAL, idle_s REAL, alarm_s REAL, wait_s REAL,
+                             work_att_s REAL, idle_att_s REAL, cycles INTEGER, PRIMARY KEY(machine, minute));
 CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT);
 """
 MAIN_SCHEMA = """
 CREATE TABLE events(camera TEXT, ts REAL, type TEXT, subject TEXT, value TEXT, clip TEXT, thumb TEXT, source TEXT);
-CREATE TABLE minutes(camera TEXT, minute INTEGER, covered_s REAL, people_s REAL, people_max INTEGER,
-                     work_s REAL, idle_s REAL, det_frames INTEGER, PRIMARY KEY(camera, minute));
+CREATE TABLE minutes(camera TEXT, minute INTEGER, covered_s REAL, people_s REAL, people_max INTEGER, det_frames INTEGER,
+                     PRIMARY KEY(camera, minute));
+CREATE TABLE zone_minutes(camera TEXT, zone TEXT, minute INTEGER, covered_s REAL, occupied_s REAL, people_s REAL,
+                          PRIMARY KEY(camera, zone, minute));
+CREATE TABLE machine_minutes(camera TEXT, machine TEXT, minute INTEGER, work_s REAL, idle_s REAL, alarm_s REAL, wait_s REAL,
+                             work_att_s REAL, idle_att_s REAL, cycles INTEGER, PRIMARY KEY(camera, machine, minute));
 CREATE TABLE files(source TEXT PRIMARY KEY, camera TEXT, start_ts REAL, video_s REAL, processed_s REAL,
                    det_frames INTEGER, elapsed_s REAL);
 CREATE INDEX events_ix ON events(camera, type, ts);
@@ -28,16 +35,20 @@ def shard_path(out_dir: Path, camera: str, rel: str) -> Path:
     return out_dir / "shards" / camera / f"{safe}_{hashlib.md5(norm.encode(), usedforsecurity=False).hexdigest()[:8]}.db"
 
 
-def write_shard(path: Path, events, minutes: dict, meta: dict):
-    """Written to .tmp then renamed, so an interrupted run never leaves a half-finished shard."""
+def write_shard(path: Path, events, tables: dict, meta: dict):
+    """Written to .tmp then renamed, so an interrupted run never leaves a half-finished shard.
+    tables: minutes {minute: row}, zone_minutes {(zone, minute): row}, machine_minutes {(machine, minute): row}."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.unlink(missing_ok=True)
     con = sqlite3.connect(tmp)
     con.executescript(SHARD_SCHEMA)
     con.executemany("INSERT INTO events VALUES(?,?,?,?,?,?)", events)
-    con.executemany("INSERT INTO minutes VALUES(?,?,?,?,?,?,?)", [(m, *row) for m, row in minutes.items()])
-    con.executemany("INSERT INTO meta VALUES(?,?)", [(k, str(v)) for k, v in meta.items()])
+    con.executemany("INSERT INTO minutes VALUES(?,?,?,?,?)", [(m, *r) for m, r in tables.get("minutes", {}).items()])
+    con.executemany("INSERT INTO zone_minutes VALUES(?,?,?,?,?)", [(z, m, *r) for (z, m), r in tables.get("zone_minutes", {}).items()])
+    con.executemany("INSERT INTO machine_minutes VALUES(?,?,?,?,?,?,?,?,?)",
+                    [(n, m, *r) for (n, m), r in tables.get("machine_minutes", {}).items()])
+    con.executemany("INSERT INTO meta VALUES(?,?)", [(k, str(v)) for k, v in {**meta, "schema": SCHEMA_VERSION}.items()])
     con.commit()
     con.close()
     os.replace(tmp, path)
@@ -56,15 +67,24 @@ def merge_shards(out_dir: Path) -> Path:
     for sh in sorted((out_dir / "shards").rglob("*.db")):
         con.execute("ATTACH ? AS s", (str(sh),))
         meta = dict(con.execute("SELECT k, v FROM s.meta").fetchall())
+        if meta.get("schema") != SCHEMA_VERSION:
+            raise RuntimeError(f"{sh} was written by an older version; delete the 'shards' folder in {out_dir} and run again")
         cam, src = meta["camera"], meta["source"]
         con.execute("BEGIN")
         con.execute("INSERT INTO events SELECT ?, ts, type, subject, value, clip, thumb, ? FROM s.events", (cam, src))
-        con.execute("""INSERT INTO minutes SELECT ?, minute, covered_s, people_s, people_max, work_s, idle_s, det_frames
-                       FROM s.minutes WHERE true
-                       ON CONFLICT(camera, minute) DO UPDATE SET
-                         covered_s = covered_s + excluded.covered_s, people_s = people_s + excluded.people_s,
-                         people_max = max(people_max, excluded.people_max), work_s = work_s + excluded.work_s,
-                         idle_s = idle_s + excluded.idle_s, det_frames = det_frames + excluded.det_frames""", (cam,))
+        con.execute("""INSERT INTO minutes SELECT ?, minute, covered_s, people_s, people_max, det_frames FROM s.minutes WHERE true
+                       ON CONFLICT(camera, minute) DO UPDATE SET covered_s = covered_s + excluded.covered_s,
+                         people_s = people_s + excluded.people_s, people_max = max(people_max, excluded.people_max),
+                         det_frames = det_frames + excluded.det_frames""", (cam,))
+        con.execute("""INSERT INTO zone_minutes SELECT ?, zone, minute, covered_s, occupied_s, people_s FROM s.zone_minutes WHERE true
+                       ON CONFLICT(camera, zone, minute) DO UPDATE SET covered_s = covered_s + excluded.covered_s,
+                         occupied_s = occupied_s + excluded.occupied_s, people_s = people_s + excluded.people_s""", (cam,))
+        con.execute("""INSERT INTO machine_minutes SELECT ?, machine, minute, work_s, idle_s, alarm_s, wait_s, work_att_s,
+                         idle_att_s, cycles FROM s.machine_minutes WHERE true
+                       ON CONFLICT(camera, machine, minute) DO UPDATE SET work_s = work_s + excluded.work_s,
+                         idle_s = idle_s + excluded.idle_s, alarm_s = alarm_s + excluded.alarm_s, wait_s = wait_s + excluded.wait_s,
+                         work_att_s = work_att_s + excluded.work_att_s, idle_att_s = idle_att_s + excluded.idle_att_s,
+                         cycles = cycles + excluded.cycles""", (cam,))
         con.execute("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?)",
                     (src, cam, float(meta["start_ts"]), float(meta["video_s"]), float(meta["processed_s"]),
                      int(meta["det_frames"]), float(meta["elapsed_s"])))

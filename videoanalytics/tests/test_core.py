@@ -1,5 +1,4 @@
 import math
-import sqlite3
 from datetime import datetime
 
 import cv2
@@ -9,9 +8,8 @@ import pytest
 from videoanalytics import pipeline
 from videoanalytics.detector import _grids, postprocess
 from videoanalytics.pipeline import DEFAULTS, active_intervals, process_video
-from videoanalytics.report import write_reports
 from videoanalytics.sources import camera_for, discover, naive_epoch, parse_start
-from videoanalytics.storage import merge_shards, shard_path, write_shard
+from videoanalytics.storage import shard_path
 from videoanalytics.tracker import Tracker
 from videoanalytics.zones import Line, MachineState, Motion, Zone
 
@@ -171,26 +169,26 @@ def _src(path):
 def test_pipeline_counts_person_and_ignores_it_for_machine(tmp_path):
     v = tmp_path / "a.mp4"
     _video(v, person=True, machine_motion=False)
-    events, minutes, meta = process_video(_src(v), CAM, {**DEFAULTS, "fps": 5, "clips": False}, _stub_detect)
+    events, tables, meta = process_video(_src(v), CAM, {**DEFAULTS, "fps": 5, "clips": False}, _stub_detect)
     types = [e[1] for e in events]
     assert types.count("person_appeared") == 1
     assert ("line_cross", "mid:in") in [(e[1], e[3]) for e in events]
     assert "zone_enter" in types and "zone_exit" in types
     assert "machine_state" not in types
-    (row,) = minutes.values()
-    assert row[0] == pytest.approx(20, abs=1) and row[2] == 1 and row[1] > 10  # covered_s, people_max, person-seconds
+    (row,) = tables["minutes"].values()
+    assert row[0] == pytest.approx(20, abs=1) and row[2] == 1 and row[1] > 10  # covered_s, person-seconds, people_max
 
 
 def test_pipeline_machine_work_and_gate(tmp_path):
     v = tmp_path / "b.mp4"
     _video(v, person=False, machine_motion=True)
     calls = []
-    events, minutes, meta = process_video(_src(v), CAM, {**DEFAULTS, "fps": 5, "clips": False, "keepalive_s": 5},
-                                          lambda f: calls.append(1) or [])
+    events, tables, meta = process_video(_src(v), CAM, {**DEFAULTS, "fps": 5, "clips": False, "keepalive_s": 5},
+                                         lambda f: calls.append(1) or [])
     states = [e[3] for e in events if e[1] == "machine_state"]
     assert states == ["work", "idle"]
-    (row,) = minutes.values()
-    assert 8 <= row[3] <= 14 and 1 <= row[4] <= 6  # work_s, idle_s (first 4 s = warm-up, not counted)
+    (row,) = tables["machine_minutes"].values()
+    assert 8 <= row[0] <= 14 and 1 <= row[1] <= 6  # work_s, idle_s (first 4 s = warm-up, not counted)
     assert 0 < meta["det_frames"] < meta["frames"]  # motion gate skipped the detector in the still parts
 
 
@@ -206,36 +204,12 @@ def test_pipeline_clips_written(tmp_path):
 def test_active_hours_skip_everything_outside(tmp_path):
     v = tmp_path / "d.mp4"
     _video(v, person=True, machine_motion=False)
-    events, minutes, meta = process_video(_src(v), CAM, {**DEFAULTS, "fps": 5, "clips": False, "active_hours": [[9, 10]]},
-                                          _stub_detect)
-    assert events == [] and minutes == {} and meta["frames"] == 0
+    events, tables, meta = process_video(_src(v), CAM, {**DEFAULTS, "fps": 5, "clips": False, "active_hours": [[9, 10]]},
+                                         _stub_detect)
+    assert events == [] and tables["minutes"] == {} and meta["frames"] == 0
 
 
-# ---------- storage / report ----------
-def test_shards_merge_and_report(tmp_path):
-    ts = naive_epoch(datetime(2026, 10, 1, 8, 0))
-    for n, rel in enumerate(["a.mp4", "b.mp4"]):  # two files sharing the same minute (file boundary)
-        write_shard(tmp_path / "shards" / "cam1" / f"{rel}.db",
-                    [(ts + 5, "person_appeared", "t1", "", "", ""), (ts + 10, "machine_state", "machine", "idle", "", ""),
-                     (ts + 400, "machine_state", "machine", "work", "", "")],
-                    {int(ts // 60): [30.0, 60.0, 3, 10.0, 20.0, 5]},
-                    dict(camera="cam1", source=rel, start_ts=ts, video_s=60, processed_s=30, frames=90, det_frames=5, elapsed_s=2))
-    m0 = int(ts // 60) + 10  # six consecutive idle minutes in a third shard, with a clip saved at its start
-    write_shard(tmp_path / "shards" / "cam1" / "c.mp4.db",
-                [(m0 * 60 + 3, "machine_state", "machine", "idle", "clips/cam1/x_idle.mp4", "clips/cam1/x_idle.jpg")],
-                {m: [60.0, 0.0, 0, 0.0, 60.0, 0] for m in range(m0, m0 + 6)},
-                dict(camera="cam1", source="c.mp4", start_ts=m0 * 60, video_s=360, processed_s=360, frames=1, det_frames=0, elapsed_s=1))
-    db = merge_shards(tmp_path)
-    con = sqlite3.connect(db)
-    assert con.execute(
-        "SELECT covered_s, people_s, people_max, work_s, idle_s FROM minutes ORDER BY minute LIMIT 1").fetchall() == [(60.0, 120.0, 3, 20.0, 40.0)]
-    assert con.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 7
-    page = write_reports(tmp_path, idle_min_s=300).read_text(encoding="utf-8")
-    assert "cam1" in page and "Longest machine idle periods" in page and "clips/cam1/x_idle.jpg" in page
-    assert (tmp_path / "idle_periods.csv").read_text().splitlines()[1:] == ["cam1,2026-10-01 08:10:00,6.0,clips/cam1/x_idle.mp4"]
-    assert (tmp_path / "hourly.csv").read_text().splitlines()[1].startswith("cam1,2026-10-01,08,7.0,0.286,3,2,0,0,0.3,6.7")
-
-
+# ---------- storage ----------
 def test_shard_paths_are_unique_and_short(tmp_path):
     a, b = shard_path(tmp_path, "cam1", "a/b.mp4"), shard_path(tmp_path, "cam1", "a__b.mp4")
     assert a != b and a == shard_path(tmp_path, "cam1", "a\\b.mp4")

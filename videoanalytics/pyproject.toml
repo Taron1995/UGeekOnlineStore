@@ -4,10 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "videoanalytics"
-version = "0.1.0"
+version = "0.2.0"
 description = "Offline video analytics MVP: people counting and machine activity from multi-day CCTV recordings"
 requires-python = ">=3.10"
 dependencies = ["numpy", "opencv-python-headless", "onnxruntime", "pyyaml"]
+
+[project.optional-dependencies]
+pose = ["mediapipe"]                       # inactivity.method: pose (Linux also needs libegl1 libgles2)
+workpieces = ["rfdetr", "supervision"]    # workpiece counting (installs PyTorch)
+train = ["rfdetr[train]", "supervision"]   # fine-tuning the workpiece detector
+all = ["mediapipe", "rfdetr", "supervision"]
 
 [project.scripts]
 vidan = "videoanalytics.cli:main"

@@ -1,0 +1,57 @@
+"""Small video helpers shared by the pipeline and the analyzers."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+import cv2
+
+
+def fmt_ts(ts: float, f: str = "%Y%m%d_%H%M%S") -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime(f)
+
+
+def active_intervals(start_ts: float, duration: float, hours):
+    """File-relative [a, b) second ranges that fall inside the daily hour ranges, e.g. [[8, 20]] or [[20, 6]]."""
+    if not hours:
+        return [(0.0, duration)]
+    ranges = []
+    for h1, h2 in hours:
+        ranges += [(h1, 24), (0, h2)] if h2 <= h1 else [(h1, h2)]
+    end_ts, out = start_ts + duration, []
+    for day in range(int(start_ts // 86400), int(end_ts // 86400) + 1):
+        for h1, h2 in ranges:
+            a, b = max(start_ts, day * 86400 + h1 * 3600), min(end_ts, day * 86400 + h2 * 3600)
+            if b > a:
+                out.append((a - start_ts, b - start_ts))
+    merged = []
+    for a, b in sorted(out):  # e.g. 22-24 and 00-06 touch at midnight: one pass, no tracker reset
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def open_capture(path: str, hw: bool = False):
+    if hw:  # D3D11VA/VAAPI if the OpenCV build has it; silently falls back to software
+        cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY])
+        if cap.isOpened():
+            return cap
+    return cv2.VideoCapture(path)
+
+
+def save_clip(path: str, t_rel: float, out_path: Path, pad: float, hw: bool = False):
+    cap = open_capture(path, hw)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = fps if 1 <= fps <= 120 else 25.0
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_rel - pad) * 1000)
+    out = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    for _ in range(int(2 * pad * fps)):
+        ok, f = cap.read()
+        if not ok:
+            break
+        out.write(f)
+    out.release()
+    cap.release()
