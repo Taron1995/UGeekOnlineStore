@@ -1,5 +1,7 @@
 # videoanalytics - offline people & machine-activity analytics for multi-day CCTV footage
 
+Հայերեն՝ [README.hy.md](README.hy.md)
+
 Runs on the footage you already have (days of recordings from many cameras), fully offline:
 
 | Step | What | Component |
