@@ -20,7 +20,7 @@ from .report import write_reports
 from .sources import VIDEO_EXT, discover, discover_auto
 from .storage import SCHEMA_VERSION, clean_stale, merge_shards, shard_glob, shard_meta, shard_path
 from .tools import MODEL_URLS, fetch_models, snapshot
-from .video import active_intervals
+from .video import active_intervals, fmt_ts
 
 MODEL = "yolox_tiny.onnx"
 FINGERPRINT_OPTS = ("fps", "conf", "min_hits", "iou_thr", "max_lost_s", "gate_motion", "keepalive_s", "clips", "max_clips_per_file",
@@ -192,6 +192,51 @@ def run_analysis(cams, opts, srcs, out: Path, model, workers, *, limit_files=Non
     return errors
 
 
+def _load_detector(model_path: str, conf: float):
+    from .detector import PersonDetector
+    return PersonDetector(model_path, conf=conf, threads=1).detect
+
+
+def cameras_summary(srcs, hours=None) -> str:
+    """One line per camera: how many files, how much video, which period. Shown before anything is computed, so wrong camera names
+    (a file naming the program cannot tell apart) are noticed in the first second."""
+    per: dict = {}
+    for s in srcs:
+        p = per.setdefault(s["camera"], [0, 0.0, 1e18, 0.0])
+        p[0] += 1
+        p[1] += sum(b - a for a, b in active_intervals(s["start_ts"], s["duration"], hours))
+        p[2], p[3] = min(p[2], s["start_ts"]), max(p[3], s["start_ts"] + s["duration"])
+    lines = [f"  {cam}: {n} file(s), {_wall(t)} of video, {fmt_ts(t0, '%Y-%m-%d %H:%M')} -> {fmt_ts(t1, '%Y-%m-%d %H:%M')}"
+             for cam, (n, t, t0, t1) in sorted(per.items())[:12]]
+    if len(per) > 12:
+        lines.append(f"  ... and {len(per) - 12} more camera(s)")
+    return "\n".join(lines)
+
+
+def _wall(seconds: float) -> str:
+    return f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min" if seconds < 5400 else f"{seconds / 3600:.1f} h"
+
+
+def estimate(srcs, cams, opts, make_detect, workers, bench_s: float = 15.0):
+    """A line with the wall-clock upper bound for the whole job, from a short test of one recording (decoder + detector on every sampled frame,
+    one thread, no motion gate). None when the job is short or the test could not run. make_detect() returns the detector function."""
+    total = sum(b - a for s in srcs for a, b in active_intervals(s["start_ts"], s["duration"], opts["active_hours"]))
+    if total < 2 * 3600:
+        return None
+    s = srcs[len(srcs) // 2]
+    try:
+        _, _, meta = pipeline.process_video({k: v for k, v in s.items() if k != "seg"}, cams[s["camera"]], {**opts, "gate_motion": -1.0, "clips": False},
+                                            make_detect(), None, limit_s=bench_s)
+    except Exception:  # noqa: BLE001 - an estimate must never stop the real work
+        return None
+    if meta["processed_s"] < 3:
+        return None
+    w = workers or os.cpu_count() or 1
+    wall = total * meta["elapsed_s"] / meta["processed_s"] / w
+    return (f"Estimate: about {_wall(wall)} for {_wall(total)} of video on {w} worker(s) - an upper bound from a quick test (the motion gate usually makes it "
+            f"faster; cameras with workpiece counting are slower). To shorten it: --hours 8-20 (working hours only), --fps 2, or do one camera / one day first.")
+
+
 # ---- scene learning ---------------------------------------------------------------------------------------------------
 def learn_task(task: dict) -> dict:
     """Worker side: learn one camera's setup. Never raises."""
@@ -280,6 +325,7 @@ def analyze(paths, *, out=None, config=None, model=None, workers=None, open_repo
         raise SystemExit("no readable video files")
     hours_total = sum(s["duration"] for s in srcs) / 3600
     print(f"{len(srcs)} recording(s) of {len({s['camera'] for s in srcs})} camera(s), {hours_total:.1f} h of video", flush=True)
+    print(cameras_summary(srcs, opts["active_hours"]), flush=True)
 
     if cfg is None:
         if auto:
@@ -288,6 +334,9 @@ def analyze(paths, *, out=None, config=None, model=None, workers=None, open_repo
             cfg = {"cameras": {c: {"match": m["match"], **build_camera_config([], [], [])} for c, m in match.items()}}
         cams = {k: normalize_camera(v) for k, v in cfg["cameras"].items()}
 
+    line = estimate(srcs, cams, opts, (lambda: detect) if detect is not None else (lambda: _load_detector(model_path, opts["conf"])), workers)
+    if line:
+        print(line, flush=True)
     print("Analysing ...", flush=True)
     run_analysis(cams, opts, srcs, out, model_path, workers, limit_files=limit_files, chunk_s=chunk_s, detect=detect)
     merge_shards(out)

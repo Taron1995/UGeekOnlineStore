@@ -181,7 +181,7 @@ def cmd_train(a):
     best, best_f1 = None, -1.0
     try:
         from .workpieces import RFDETRDetector, evaluate_detector
-        print(f"\nchecking the candidates on your validation images (confidence >= 0.5, IoU >= 0.5):")
+        print("\nchecking the candidates on your validation images (confidence >= 0.5, IoU >= 0.5):")
         for c in cands:
             det = RFDETRDetector(str(c), threshold=0.5, device=a.device)
             r = evaluate_detector(det.detect, a.dataset)

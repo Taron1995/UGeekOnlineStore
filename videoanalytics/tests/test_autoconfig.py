@@ -1,10 +1,8 @@
 import itertools
 
-import cv2
 import numpy as np
-import pytest
 
-from tests.test_features import FPS, SIZE, make_video, src
+from tests.test_features import SIZE, make_video, src
 from videoanalytics.autoconfig import build_camera_config, learn_scene, sample_windows
 from videoanalytics.config import check_config, normalize_camera
 from videoanalytics.zones import Zone

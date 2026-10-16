@@ -137,7 +137,6 @@ def test_match_boxes_is_one_to_one_and_threshold_aware():
 
 def test_evaluate_detector_on_a_coco_split(tmp_path):
     import json
-    import cv2
     from tests.test_tools import coco
     from videoanalytics.tools import split_coco
     from videoanalytics.workpieces import evaluate_detector

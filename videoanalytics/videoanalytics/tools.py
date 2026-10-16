@@ -182,7 +182,6 @@ def probe_activity(src: dict, cam_cfg: dict, detect, method: str, pose, start_s:
     from .analyzers import Ctx
     from .inactivity import InactivityAnalyzer, _Person
     from .tracker import Tracker
-    from .zones import Motion
     cam = normalize_camera(cam_cfg)
     az = InactivityAnalyzer(dict(method=method), [], pose)
     thr = az.thr if thr is None else thr

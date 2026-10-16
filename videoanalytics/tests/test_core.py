@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 import pytest
 
-from videoanalytics import pipeline
 from videoanalytics.detector import _grids, postprocess
 from videoanalytics.pipeline import DEFAULTS, active_intervals, process_video
 from videoanalytics.sources import camera_for, discover, naive_epoch, parse_start

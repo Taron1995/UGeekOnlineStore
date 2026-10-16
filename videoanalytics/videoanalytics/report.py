@@ -386,7 +386,7 @@ def write_reports(out_dir: Path, idle_min_s: float = 300.0, cfg: dict | None = N
             "SELECT camera, zone, minute/60, SUM(covered_s), SUM(occupied_s), SUM(people_s) FROM zone_minutes GROUP BY camera, zone, minute/60"):
         zh[(cam, zone, h)] = (cov, occ, ps)
     zones = sorted({(c, z) for c, z, _ in zh})
-    daily_rows, absence_rows, station_csv = [], [], []
+    absence_rows, station_csv = [], []
     zone_info = {}
     for cam, zone in zones:
         zcfg = next((z for z in ccfg.get(cam, {}).get("zones", []) if z.get("name") == zone), {})

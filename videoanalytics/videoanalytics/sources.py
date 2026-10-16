@@ -128,7 +128,8 @@ def auto_camera_name(rel: str):
     """cam1_20261001_080000.mp4 -> cam1;  2026-10-01/cam2/08-00-00.mp4 -> cam2;  None when the path says nothing."""
     p = Path(rel.replace("\\", "/"))
     had_ts = bool(TS_RE.search(p.stem))
-    stem = _BARE.sub(" ", DATE_RE.sub(" ", TS_RE.sub(" ", p.stem)))
+    stem = re.sub(r"\[[^\]]*\]", " ", p.stem)  # recorder tags such as [R][0@0][0]
+    stem = _BARE.sub(" ", DATE_RE.sub(" ", TS_RE.sub(" ", stem)))
     name = _clean(stem)
     if had_ts:
         name = re.sub(r"_\d{3,4}$", "", name)  # chunk counters: cam1_20261001_080000_001.mp4

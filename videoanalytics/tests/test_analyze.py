@@ -1,5 +1,3 @@
-import os
-import re
 import shutil
 import sqlite3
 
@@ -9,8 +7,8 @@ import yaml
 from tests.test_autoconfig import draw_lamps
 from tests.test_features import make_video
 from videoanalytics import analyze as an
-from videoanalytics.analyze import analyze, ensure_model, fingerprint, plan_tasks, resolve_inputs, split_segments
-from videoanalytics.config import check_config
+from videoanalytics.analyze import analyze, cameras_summary, ensure_model, estimate, fingerprint, plan_tasks, resolve_inputs, split_segments
+from videoanalytics.config import DEFAULTS, check_config, normalize_camera
 from videoanalytics.sources import auto_camera_name, discover_auto
 from videoanalytics.storage import shard_path, write_shard
 
@@ -90,6 +88,21 @@ def test_clips_of_an_earlier_run_are_not_inputs_even_if_the_results_folder_is_el
     capsys.readouterr()
     run(tmp_path, tmp_path, out=tmp_path / "second")
     assert "2 recording(s) of 2 camera(s)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("rel, name", [
+    ("cam1_20261001_080000.mp4", "cam1"),
+    ("Cam 1/2026-10-01/08-00-00.mp4", "Cam_1"),
+    ("2026-10-01/cam2/08-00-00.mp4", "cam2"),
+    ("ch01_main_20261001080000.mp4", "ch01_main"),
+    ("ch01_20261001080000[R][0@0][0].mp4", "ch01"),  # recorder tags are not part of the name
+    ("garage_20261001_080000_001.mp4", "garage"),  # chunk counter
+    ("Hall\\20261001_080000.mp4", "Hall"),  # Windows separators
+    ("Камера 1/2026-10-01/08-00-00.mp4", "Камера_1"),
+    ("08-00-00.mp4", None), ("20261001_080000.mp4", None), ("1.mp4", None), ("2026-10-01/5.mp4", None),
+])
+def test_camera_names_from_typical_layouts(rel, name):
+    assert auto_camera_name(rel) == name
 
 
 def test_date_folder_layout_and_no_auto_mode(tmp_path):
@@ -191,3 +204,37 @@ def test_model_lookup_and_offline_message(tmp_path, monkeypatch):
     assert "github.com/Megvii-BaseDetection" in str(e.value) and str(tmp_path / "m") in str(e.value)
     with pytest.raises(SystemExit, match="model not found"):
         ensure_model(str(tmp_path / "missing.onnx"))
+
+
+# ---------- what the user sees before the long part ----------
+def test_cameras_are_listed_before_anything_is_computed(tmp_path, capsys):
+    for n in ("cam1", "cam2"):
+        scene(tmp_path / f"{n}_20261001_080000.mp4", 20)
+    run(tmp_path, tmp_path)
+    text = capsys.readouterr().out
+    assert "  cam1: 1 file(s), 20 s of video, 2026-10-01 08:00 -> 2026-10-01 08:00" in text and "  cam2: 1 file(s)" in text
+    srcs, _, _ = discover_auto(str(tmp_path), None, None, [tmp_path / "_analysis"])
+    many = cameras_summary(srcs + [{**srcs[0], "camera": f"x{i}"} for i in range(11)])  # 13 cameras: 12 lines and "... and 1 more"
+    assert many.count("\n") == 12 and many.endswith("... and 1 more camera(s)")
+
+
+def test_time_estimate_is_given_for_long_jobs_only(tmp_path, monkeypatch):
+    v = tmp_path / "cam1_20261001_080000.mp4"
+    scene(v, 20)
+    srcs, _, _ = discover_auto(str(tmp_path), None, None, [])
+    cams = {"cam1": normalize_camera({})}
+    opts = {**DEFAULTS, "clips": False}
+    assert estimate(srcs, cams, opts, lambda: two_people, 4) is None  # 20 s of video: no estimate needed
+    long_src = [{**srcs[0], "duration": 20 * 3600.0}]  # pretend the file is 20 h long; the test only reads its first seconds
+    line = estimate(long_src, cams, opts, lambda: two_people, 4, bench_s=10)
+    assert line and line.startswith("Estimate: about ") and "20.0 h of video on 4 worker(s)" in line and "--hours" in line
+    # the arithmetic, with a known cost: 10 video-s took 5 s -> 0.5 CPU-s per video-s; 72000 s of video on 4 workers = 9000 s
+    monkeypatch.setattr(an.pipeline, "process_video", lambda *a, **k: ([], {}, dict(processed_s=10.0, elapsed_s=5.0)))
+    assert "about 2.5 h for 20.0 h of video on 4 worker(s)" in estimate(long_src, cams, opts, lambda: two_people, 4)
+    assert estimate(long_src, cams, opts, lambda: two_people, 1).startswith("Estimate: about 10.0 h")
+    monkeypatch.undo()
+
+    def no_model():
+        raise RuntimeError("model cannot be loaded")
+
+    assert estimate(long_src, cams, opts, no_model, 4) is None  # a failing test run must not stop the real work

@@ -55,6 +55,7 @@ No camera config is needed. The program does this by itself:
      switches colour or blinks - a **signal lamp** (green = working, everything else = not working);
    * a camera where nothing is found just gets people counting.
 4. **Analysis** with all CPU cores. Recordings longer than 30 minutes are cut into chunks of about 20 minutes, so one big file also keeps every core busy (`--chunk-min`).
+   Before the long part it lists the cameras it found (check the names!) and, for more than 2 hours of video, prints an upper-bound time estimate with the ways to shorten it.
    You can stop it (Ctrl+C / the Stop button) and start it again: finished work is not repeated.
 5. **Report**: `report.html` (+ CSV files) in the results folder - `<video>_analysis` next to a single video, `<folder>/_analysis` for a folder, or `--out` -
    opens in the browser. A recording of a few minutes gets timelines at 5-second resolution; days of footage get hour x day heatmaps.
