@@ -8,15 +8,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # works even when the 
 from videoanalytics.cli import main  # noqa: E402
 
 # ---- edit these ------------------------------------------------------------------------------------------------------
-VIDEOS = r"D:\footage"  # root folder with the recordings (searched recursively)
-CONFIG = "cameras.yaml"  # copy of cameras.example.yaml with your cameras, zones and lamps
+VIDEOS = r"D:\footage"  # a video file, or the folder with the recordings (searched recursively)
+CONFIG = "cameras.yaml"  # only for the manual route: a copy of cameras.example.yaml with your cameras, zones and lamps
 MODEL = "models/yolox_tiny.onnx"  # person detector
 OUT = "out"
-STEP = "scan"  # models -> scan -> snap -> trial -> run   (report rebuilds the HTML/CSV from finished files)
+STEP = "analyze"  # analyze = everything in one step (just set VIDEOS).  Manual route: models -> scan -> snap -> trial -> run
 # ---------------------------------------------------------------------------------------------------------------------
 
 COMMON = ["--config", CONFIG, "--videos", VIDEOS]
 STEPS = {
+    "analyze": ["analyze", VIDEOS],  # learns the scene by itself, analyses, opens the report (results: <folder>/_analysis)
+    "gui": ["gui", VIDEOS],  # the same in a window
     "models": ["models", "--pose"],  # downloads yolox_tiny.onnx (+ the MediaPipe pose model into models/)
     "scan": ["scan", *COMMON, "--model", MODEL],  # files per camera, timestamps, run-time estimate
     "snap": ["snap", *COMMON, "--out", OUT],  # out/snap/<camera>.jpg with grid, zones and lamp colour readout

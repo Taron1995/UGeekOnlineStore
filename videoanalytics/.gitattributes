@@ -1,0 +1,3 @@
+# the launchers must keep their line endings whatever the checkout settings are
+*.bat text eol=crlf
+*.sh text eol=lf

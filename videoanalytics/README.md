@@ -16,6 +16,9 @@ Runs on recordings you already have (days of footage, many cameras), fully offli
 
 Everything is offline; only permissive licenses (see *Licenses*). No face recognition.
 
+**Shortest way:** `python -m videoanalytics analyze <video-or-folder>` (or drag the video onto `analyze_video.bat`, or `python -m videoanalytics gui`).
+The program learns where people work and which machines there are, analyses everything and opens the report - see *Quick start*.
+
 ## Install
 
 ```
@@ -25,12 +28,52 @@ pip install -e ".[workpieces]"      # + RF-DETR and supervision (installs PyTorc
 pip install -e ".[train]"           # + what is needed to fine-tune RF-DETR on your parts
 ```
 Python 3.10+. MediaPipe ships wheels for Windows (x64/ARM), Linux and macOS-ARM. On Linux it also needs `sudo apt install libegl1 libgles2`.
+The window (`gui`) uses tkinter, which the normal Python installers for Windows and macOS include (Linux: `sudo apt install python3-tk`).
 
 **PyCharm:** open the `videoanalytics` folder (the one with `pyproject.toml`) as the project, create a virtualenv, run the `pip install` line above in
-the PyCharm terminal, then open `run_pipeline.py`, edit the constants at the top (`VIDEOS`, `CONFIG`, ...), choose `STEP`, press Run.
-From a terminal everything is `python -m videoanalytics <command> --help`.
+the PyCharm terminal, then open `run_pipeline.py`, set `VIDEOS` to your video or folder (`STEP` is already `"analyze"`) and press Run.
+Or open `run_gui.pyw` and press Run for the window. From a terminal everything is `python -m videoanalytics <command> --help`.
 
-## Workflow
+## Quick start - give it a video, get the report
+
+```
+python -m videoanalytics analyze D:\footage\cam1_20261001_080000.mp4   # one recording ...
+python -m videoanalytics analyze D:\footage                              # ... or a whole folder: all cameras, all days (searched recursively)
+python -m videoanalytics gui                                             # the same in a window: choose, press Start
+```
+Windows: drag the video or folder onto `analyze_video.bat` (double-click it without a file to get the window). Linux / macOS: `./analyze_video.sh <path>`.
+
+No camera config is needed. The program does this by itself:
+
+1. **Cameras and times** come from the file names and folders (`cam1_20261001_080000.mp4` -> camera `cam1`, 2026-10-01 08:00:00;
+   `2026-10-01/cam2/08-00-00.mp4` -> `cam2`; files that carry no name get the folder name).
+2. **Model**: on the first run the person detector (`yolox_tiny.onnx`, 20 MB, Apache-2.0) is downloaded into `models/` (or `~/.videoanalytics/models`, or
+   `$VIDAN_MODELS`). On a computer without internet, put that file there once; the error message gives the address.
+3. **Scene learning**, about 6 minutes of footage per camera, sampled across all of its recordings (`--learn-minutes`; `--hours 8-20` keeps it to working hours):
+   * a **station** (work zone) = a place where a person stays put for at least 15 s, 30 s or more in total;
+   * a **machine** = a spot that keeps moving while the people are masked out (clock overlays and picture borders are ignored), or a small light that
+     switches colour or blinks - a **signal lamp** (green = working, everything else = not working);
+   * a camera where nothing is found just gets people counting.
+4. **Analysis** with all CPU cores. Recordings longer than 30 minutes are cut into chunks of about 20 minutes, so one big file also keeps every core busy (`--chunk-min`).
+   You can stop it (Ctrl+C / the Stop button) and start it again: finished work is not repeated.
+5. **Report**: `report.html` (+ CSV files) in the results folder - `<video>_analysis` next to a single video, `<folder>/_analysis` for a folder, or `--out` -
+   opens in the browser. A recording of a few minutes gets timelines at 5-second resolution; days of footage get hour x day heatmaps.
+
+**Check the "Learned setup" block at the top of the report first.** It draws what was found on a frame of every camera. It is a best guess made from the
+footage, not the truth: a person who simply stands somewhere (a guard at the gate) becomes a "station", a waving banner can look like a "machine", a
+machine that never ran in the sampled minutes is not found. To correct it, open `<results>/cameras.auto.yaml`, delete or move a wrong zone or machine,
+add a work `schedule` (absences need one) and run the same command again. The file is used as it is and never overwritten (`--rediscover` learns again);
+only the cameras whose setup changed are computed again.
+
+Other options: `--config cameras.yaml` (your own file, see below), `--no-auto` (people counting only), `--workers N`, `--fps`, `--hours`, `--time-regex`
+(unusual file names), `--no-open`; `python -m videoanalytics analyze --help`.
+
+What no automatic step can know: your **work schedule** (absences), the real machine state (lamp and motion are proxies), and the **number of parts**
+(the part detector has to be trained on your annotated frames, see *Workpiece counting*).
+
+## Full control: your own cameras.yaml
+
+For exact zones, several lamps, a schedule, workpiece counting or pose: write the config yourself (or start from `cameras.auto.yaml`, it has the same format).
 
 ```
 python -m videoanalytics models --pose                              # downloads models/yolox_tiny.onnx (+ MediaPipe pose model)
@@ -114,11 +157,13 @@ equals the part count if one cycle makes one part.
 
 | File | Content |
 |---|---|
-| `report.html` | cameras overview; stations (at the station / expected / absent); machines (working %, red lamp, cycles, work without operator); per camera hour x day heatmaps (people, station occupancy, machine working %, cycles); longest idle periods, absences, gatherings, people without movement - with frame and clip |
+| `report.html` | cameras overview; the learned setup drawn on a frame of every camera; stations (at the station / expected / absent); machines (working %, red lamp, cycles, work without operator); per camera a timeline (recordings up to 12 h: people, station occupancy, machine working share, 5 s to 5 min per point) and hour x day heatmaps (recordings over 3 h: people, station occupancy, machine working %, cycles); longest idle periods, absences, gatherings, people without movement - with frame and clip |
+| `cameras.auto.yaml`, `setup/` | the learned setup (editable, used again on the next run) and its snapshots with the zones drawn in |
+| `timeline.csv`, `stations_timeline.csv`, `machines_timeline.csv` | the 5-second values behind the timelines (only for recordings up to 12 h) |
 | `hourly.csv` | camera, date, hour, analysed minutes, avg/peak people, appearances, line in/out, gatherings, inactive people, workpieces |
 | `machines_hourly.csv` | camera, machine, date, hour, work / idle / alarm / wait minutes, cycles, work attended by the operator |
 | `stations_daily.csv`, `absences.csv` | per zone and day: at the station, expected, present, absent, absence %; every absence run (>= 5 min) |
-| `events.csv`, `idle_periods.csv`, `analytics.db` | every event with absolute time; idle stretches; SQLite (`events`, `minutes`, `zone_minutes`, `machine_minutes`, `files`) |
+| `events.csv`, `idle_periods.csv`, `analytics.db` | every event with absolute time; idle stretches; SQLite (`events`, `minutes`, `zone_minutes`, `machine_minutes`, `fine`, `zone_fine`, `machine_fine`, `files`) |
 | `clips/<camera>/` | `.jpg` frame + `.mp4` (OpenCV `mp4v`: plays in VLC / Windows Media Player, not inline in browsers) |
 
 ## Speed - plan this before starting
@@ -149,9 +194,17 @@ Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`
 * Lamp colours (green/yellow/red, blinking), motion machine, cycles, gatherings, occupancy, schedule/absence, idle runs, report numbers: unit tests with
   mutation checks (the tests fail when the logic is broken on purpose).
 * Gatherings on real footage: groups outside the work zone are found and the evidence frame shows them.
+* One-step `analyze` (unit tests with mutation checks, plus real runs): a video in -> setup learned -> report out. On synthetic scenes the stations (people standing
+  still), a stack light and a moving machine are found while decoys are ignored (an always-on LED, a blinking REC dot, a static two-colour sign, traffic cones
+  that a passing person hides for a moment, a clock overlay, a short stop of less than 40 s), also when the operator hides most of the machine. On the real
+  clips: walking pedestrians (`vtest.avi`) -> no station, as nobody stays; the same footage frozen with 7 people standing -> 4 stations; a 3-camera folder
+  took 38 s end to end, including the first-run model download. An edited setup is recomputed, an unchanged one reused; chunked and unchunked totals are equal;
+  the window was run for real under a virtual display (start, progress, report); Stop and the failure cases are tested with a stand-in command.
 
 **Not verified:** anything on your cameras (night/IR, occlusion, crowds, lamp overexposure); machine WORK/IDLE against real machines (it is a motion /
-lamp proxy, not a machine signal); the pose backend on large people; real workpiece accuracy; `--hw-decode`; Windows (nothing here ran on Windows).
+lamp proxy, not a machine signal); the pose backend on large people; real workpiece accuracy; `--hw-decode`; Windows (nothing here ran on Windows,
+including `analyze_video.bat` and the window under Windows). **The automatic setup has not been tried on footage from a real workshop** - how many
+false stations / machines it finds and how many real ones it misses there is unknown until you look at the "Learned setup" block of your first run.
 Measure on a hand-counted sample hour before quoting numbers.
 
 Known limits: tracks restart per file, so a person standing across a file boundary counts twice (appearances, gatherings, inactivity may split);
@@ -176,4 +229,6 @@ fine-tuned on your own footage (workpieces) avoids that for the part detector.
 ## Tests
 
 `pytest tests` (tracker, zones/lines, detector post-processing, path/time parsing, active hours, config validation, lamp, machine/cycles, occupancy,
-gatherings, inactivity, schedule/absence, report, tools, workpieces). Tests that need MediaPipe / supervision skip when the package is missing.
+gatherings, inactivity, schedule/absence, report and timelines, tools, workpieces, scene learning, the one-step run, the window). Tests that need
+MediaPipe / supervision skip when the package is missing; the window tests need a display (Linux without one: `xvfb-run python -m pytest tests/test_gui.py`)
+and skip without it.

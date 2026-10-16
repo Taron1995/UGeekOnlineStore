@@ -118,6 +118,11 @@ def cmd_analyze(a):
             fps=a.fps, conf=a.conf, clips=not a.no_clips, hw_decode=a.hw_decode, no_gate=a.no_gate, time_regex=a.time_regex)
 
 
+def cmd_gui(a):
+    from .gui import main as gui_main
+    gui_main(a.paths)
+
+
 def cmd_report(a):
     out = Path(a.out)
     merge_shards(out)
@@ -257,6 +262,10 @@ def main(argv=None):
     p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")
     tuning(p)
     p.set_defaults(f=cmd_analyze)
+
+    p = sub.add_parser("gui", help="a window: choose videos / a folder, press Start, read the report (no command line needed)")
+    p.add_argument("paths", nargs="*", help="videos / folders to put in the list at once")
+    p.set_defaults(f=cmd_gui)
 
     p = sub.add_parser("report", help="rebuild the report from finished files")
     p.add_argument("--out", default="out")

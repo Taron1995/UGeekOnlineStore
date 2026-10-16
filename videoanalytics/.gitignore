@@ -11,3 +11,5 @@ videos/
 dataset/
 out/
 output/
+_analysis/
+*_analysis/

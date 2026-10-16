@@ -18,5 +18,8 @@ all = ["mediapipe", "rfdetr", "supervision"]
 [project.scripts]
 vidan = "videoanalytics.cli:main"
 
+[project.gui-scripts]
+vidan-gui = "videoanalytics.gui:main"   # the window, started without a console (Windows)
+
 [tool.setuptools]
 packages = ["videoanalytics"]
