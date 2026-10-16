@@ -5,7 +5,7 @@ import time
 import pytest
 
 from videoanalytics import gui
-from videoanalytics.gui import Job, build_command, kill_tree, parse_progress, parse_report
+from videoanalytics.gui import Job, build_command, kill_tree, parse_progress, parse_report, parse_saved
 
 
 def test_command_for_the_analysis_process(tmp_path):
@@ -17,11 +17,22 @@ def test_command_for_the_analysis_process(tmp_path):
     assert "--out" not in plain and "--workers" not in plain and "--rediscover" not in plain
 
 
+def test_command_for_the_check_and_for_camera_options(tmp_path):
+    check = build_command([tmp_path / "a.mp4"], out=tmp_path / "res", workers=2, relearn=True, python="py", doctor=True, one_camera=True,
+                          start="2026-10-01 08:30")
+    assert check[:5] == ["py", "-m", "videoanalytics", "doctor", str(tmp_path / "a.mp4")]
+    assert "--no-open" not in check and "--rediscover" not in check  # neither applies to the check
+    assert check[check.index("--out") + 1] == str(tmp_path / "res") and "--one-camera" in check and check[check.index("--start") + 1] == "2026-10-01 08:30"
+    run = build_command(["x.mp4"], python="py", one_camera=True, start="2026-10-01 08:30")
+    assert run[3] == "analyze" and "--one-camera" in run and "--start" in run and "--no-open" in run
+
+
 def test_output_lines_are_understood():
     assert parse_progress("[3/5] cam1_20261001.avi: 80s video, 265/265 frames detected, 20s") == (3, 5)
     assert parse_progress("5 job(s) to process (0 already done)") is None and parse_progress("  [1/2] indented") is None
     assert parse_report("REPORT: /tmp/a b/report.html") == "/tmp/a b/report.html"
     assert parse_report("Report: x") is None and parse_report("note REPORT: x") is None
+    assert parse_saved("Saved as /tmp/a b/doctor.txt") == "/tmp/a b/doctor.txt" and parse_saved("Saved in x") is None
 
 
 @pytest.mark.skipif(os.name == "nt", reason="process groups are checked on POSIX")
@@ -162,3 +173,64 @@ def test_start_without_input_does_not_run(root, monkeypatch):
     app = gui.App(root, build=fake("print('should not run')"))
     app.start()
     assert asked and app.job is None
+
+
+def recording(script, seen):
+    def build(paths, **kw):
+        seen.append(kw)
+        return [sys.executable, "-c", script]
+    return build
+
+
+def test_check_runs_the_doctor_and_needs_no_report(root, tmp_path):
+    saved = tmp_path / "res" / "doctor.txt"
+    saved.parent.mkdir()
+    saved.write_text("x")
+    seen = []
+    app = gui.App(root, build=recording(f"print('== Computer'); print('Saved as {saved}')", seen), show_report=lambda p: seen.append(("report", p)))
+    app.add_paths(["clip.mp4"])
+    app.check()
+    assert wait(root, lambda: app.job is None)
+    assert seen[0]["doctor"] is True and seen[-1] == seen[0]  # no report was opened
+    assert app.status_var.get().startswith("The check is done") and "Copy the log" in app.status_var.get()
+    assert str(app.report_btn.cget("state")) == "disabled" and str(app.folder_btn.cget("state")) == "normal"  # doctor.txt's folder can be opened
+    assert str(app.start_btn.cget("state")) == "normal" and str(app.check_btn.cget("state")) == "normal"
+    assert "== Computer" in app.log.get("1.0", "end")
+
+
+def test_a_failed_check_says_so(root):
+    app, _ = window(root, "import sys; print('boom'); sys.exit(2)")
+    app.check()
+    assert wait(root, lambda: app.job is None)
+    assert "check did not finish" in app.status_var.get() and "exit code 2" in app.status_var.get()
+
+
+def test_camera_options_reach_the_command(root):
+    seen = []
+    app = gui.App(root, build=recording("pass", seen))
+    app.add_paths(["clip.mp4"])
+    app.one_var.set(True)
+    app.start_var.set(" 2026-10-01 08:30 ")
+    app.workers_var.set("3")
+    app.start()
+    assert wait(root, lambda: app.job is None)
+    assert seen == [dict(out=None, workers=3, relearn=False, doctor=False, one_camera=True, start="2026-10-01 08:30")]
+
+
+def test_a_start_time_that_cannot_be_read_is_refused_before_anything_runs(root, monkeypatch):
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: shown.append(a))
+    seen = []
+    app = gui.App(root, build=recording("print('should not run')", seen))
+    app.add_paths(["clip.mp4"])
+    app.start_var.set("tomorrow")
+    app.start()
+    assert shown and "start time" in shown[0][1] and app.job is None and seen == []
+
+
+def test_the_log_can_be_copied(root):
+    app, _ = window(root, "print('line one'); print('line two')")
+    app.start()
+    assert wait(root, lambda: app.job is None)
+    app.copy_log()
+    assert root.clipboard_get() == "line one\nline two\n"

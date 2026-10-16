@@ -14,7 +14,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from .sources import VIDEO_EXT
+from .sources import VIDEO_EXT, parse_start_arg
 
 try:
     import tkinter as tk
@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent  # the project folder: `python -m 
 NO_WINDOW, NEW_GROUP = 0x08000000, 0x00000200  # Windows process flags: no console window for the child, own process group
 PROGRESS = re.compile(r"^\[(\d+)/(\d+)\]")
 REPORT = re.compile(r"^REPORT:\s*(.+?)\s*$")
+SAVED = re.compile(r"^Saved as\s+(.+?)\s*$")  # the last line of `doctor`
 NEEDS_TK = ("The window needs tkinter (part of the normal Python installer; on Linux: sudo apt install python3-tk).\n"
             "Without it use the command line:  python -m videoanalytics analyze <video-or-folder>")
 
@@ -38,14 +39,21 @@ def python_exe() -> str:
     return str(exe)
 
 
-def build_command(paths, *, out=None, workers=None, relearn=False, python=None) -> list[str]:
-    cmd = [python or python_exe(), "-m", "videoanalytics", "analyze", *[os.path.abspath(p) for p in paths], "--no-open"]
+def build_command(paths, *, out=None, workers=None, relearn=False, python=None, doctor=False, one_camera=False, start=None) -> list[str]:
+    """doctor=True: the quick check of the recordings instead of the analysis."""
+    cmd = [python or python_exe(), "-m", "videoanalytics", "doctor" if doctor else "analyze", *[os.path.abspath(p) for p in paths]]
+    if not doctor:
+        cmd.append("--no-open")
     if out:
         cmd += ["--out", os.path.abspath(out)]
     if workers:
         cmd += ["--workers", str(int(workers))]
-    if relearn:
+    if relearn and not doctor:
         cmd.append("--rediscover")
+    if one_camera:
+        cmd.append("--one-camera")
+    if start:
+        cmd += ["--start", start]
     return cmd
 
 
@@ -58,6 +66,12 @@ def parse_progress(line: str):
 def parse_report(line: str):
     """'REPORT: /path/to/report.html' -> the path"""
     m = REPORT.match(line)
+    return m[1] if m else None
+
+
+def parse_saved(line: str):
+    """'Saved as /path/to/doctor.txt' -> the path"""
+    m = SAVED.match(line)
     return m[1] if m else None
 
 
@@ -111,12 +125,14 @@ class App:
         self.root, self.build, self.show_report, self.show_folder = root, build, show_report, show_folder
         self.paths: list[str] = []
         self.job: Job | None = None
-        self.report: str | None = None
+        self.report: str | None = None  # the finished report
+        self.saved: str | None = None  # doctor.txt after a check
+        self.mode = "analyze"
         self.stopping = False
         root.title("Video analytics")
-        root.minsize(760, 600)
-        self.out_var, self.workers_var = tk.StringVar(), tk.StringVar(value="0")
-        self.relearn_var, self.open_var = tk.BooleanVar(value=False), tk.BooleanVar(value=True)
+        root.minsize(760, 640)
+        self.out_var, self.workers_var, self.start_var = tk.StringVar(), tk.StringVar(value="0"), tk.StringVar()
+        self.relearn_var, self.open_var, self.one_var = tk.BooleanVar(value=False), tk.BooleanVar(value=True), tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose the recordings, then press Start.")
         self._layout()
         self.add_paths(paths)
@@ -147,19 +163,26 @@ class App:
         ttk.Button(opt, text="Browse…", command=self.pick_out).grid(row=0, column=2)
         ttk.Label(opt, text="(empty: next to the video)", foreground="gray").grid(row=1, column=1, sticky="w", padx=6)
         ttk.Checkbutton(opt, text="Learn the setup again (ignore the setup of an earlier run)", variable=self.relearn_var).grid(row=2, column=0, columnspan=3, sticky="w")
-        ttk.Label(opt, text="Parallel processes (0 = automatic):").grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Spinbox(opt, from_=0, to=64, width=5, textvariable=self.workers_var).grid(row=3, column=2, sticky="e", pady=(4, 0))
-        ttk.Checkbutton(opt, text="Open the report when it is finished", variable=self.open_var).grid(row=4, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(opt, text="All these files are parts of ONE camera (their names do not tell the cameras apart)", variable=self.one_var).grid(
+            row=3, column=0, columnspan=3, sticky="w")
+        ttk.Label(opt, text="Recorded at (files with no date in their name):").grid(row=4, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(opt, textvariable=self.start_var, width=20).grid(row=4, column=1, sticky="w", padx=6, pady=(4, 0))
+        ttk.Label(opt, text="e.g. 2026-10-01 08:30", foreground="gray").grid(row=4, column=2, sticky="e", pady=(4, 0))
+        ttk.Label(opt, text="Parallel processes (0 = automatic):").grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Spinbox(opt, from_=0, to=64, width=5, textvariable=self.workers_var).grid(row=5, column=2, sticky="e", pady=(4, 0))
+        ttk.Checkbutton(opt, text="Open the report when it is finished", variable=self.open_var).grid(row=6, column=0, columnspan=3, sticky="w")
 
         run = ttk.Frame(f)
         run.grid(row=4, column=0, sticky="ew")
-        run.columnconfigure(2, weight=1)
+        run.columnconfigure(3, weight=1)
         self.start_btn = ttk.Button(run, text="Start", command=self.start)
         self.start_btn.grid(row=0, column=0)
+        self.check_btn = ttk.Button(run, text="Check the videos first", command=self.check)
+        self.check_btn.grid(row=0, column=1, padx=6)
         self.stop_btn = ttk.Button(run, text="Stop", command=self.stop, state="disabled")
-        self.stop_btn.grid(row=0, column=1, padx=6)
+        self.stop_btn.grid(row=0, column=2)
         self.bar = ttk.Progressbar(run, maximum=100)
-        self.bar.grid(row=0, column=2, sticky="ew", padx=6)
+        self.bar.grid(row=0, column=3, sticky="ew", padx=6)
         self.status = ttk.Label(f, textvariable=self.status_var, wraplength=720, justify="left")
         self.status.grid(row=5, column=0, sticky="nw", pady=(6, 0))
         f.rowconfigure(5, minsize=44)  # room for two lines, so the log below does not jump
@@ -181,6 +204,7 @@ class App:
         self.report_btn.grid(row=0, column=0)
         self.folder_btn = ttk.Button(end, text="Open the results folder", command=self.open_folder, state="disabled")
         self.folder_btn.grid(row=0, column=1, padx=6)
+        ttk.Button(end, text="Copy the log", command=self.copy_log).grid(row=0, column=2)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     # ---- choosing the input ----------------------------------------------------------------------------------------
@@ -216,30 +240,44 @@ class App:
 
     # ---- running ---------------------------------------------------------------------------------------------------
     def start(self):
+        self._launch(doctor=False)
+
+    def check(self):
+        """The quick check of the recordings (what the program sees in them, how fast this computer is): a text to copy and send."""
+        self._launch(doctor=True)
+
+    def _launch(self, doctor: bool):
         if self.job is not None:
             return
         if not self.paths:
             messagebox.showinfo("Video analytics", "Add at least one video file or folder first.")
             return
+        start = self.start_var.get().strip()
+        if start:
+            try:
+                parse_start_arg(start)
+            except ValueError as e:
+                messagebox.showerror("Video analytics", str(e))
+                return
         try:
             workers = max(0, int(self.workers_var.get() or 0))
         except ValueError:
             workers = 0
-        cmd = self.build(self.paths, out=self.out_var.get().strip() or None, workers=workers or None, relearn=self.relearn_var.get())
-        self.report, self.stopping = None, False
+        cmd = self.build(self.paths, out=self.out_var.get().strip() or None, workers=workers or None, relearn=self.relearn_var.get(),
+                         doctor=doctor, one_camera=self.one_var.get(), start=start or None)
+        self.report, self.saved, self.stopping, self.mode = None, None, False, "check" if doctor else "analyze"
         self._set_log("")
         try:
             self.job = Job(cmd)
         except OSError as e:
-            self._status(f"Could not start the analysis: {e}", bad=True)
+            self._status(f"Could not start the {'check' if doctor else 'analysis'}: {e}", bad=True)
             return
-        self.bar.configure(mode="indeterminate")  # the scene is learned first: no way to tell how long yet
+        self.bar.configure(mode="indeterminate")  # no way to tell how long it takes yet
         self.bar.start(15)
-        self.start_btn.configure(state="disabled")
+        for btn in (self.start_btn, self.check_btn, self.report_btn, self.folder_btn):
+            btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
-        self.report_btn.configure(state="disabled")
-        self.folder_btn.configure(state="disabled")
-        self._status("Working … the first minutes go to learning the scene.")
+        self._status("Checking the recordings …" if doctor else "Working … the first minutes go to learning the scene.")
         self.root.after(100, self._pump)
 
     def stop(self):
@@ -269,9 +307,11 @@ class App:
         if done:
             self._determinate()
             self.bar["value"] = 100.0 * done[0] / max(done[1], 1)
-        rep = parse_report(text)
+        rep, saved = parse_report(text), parse_saved(text)
         if rep:
             self.report = rep
+        if saved:
+            self.saved = saved
         if text.strip() and not rep:
             self._status(text.strip()[:140])
 
@@ -279,15 +319,23 @@ class App:
         self.job = None
         self._determinate()
         self.start_btn.configure(state="normal")
+        self.check_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         ready = self.report is not None and Path(self.report).is_file()
         if self.stopping:
             self._status("Stopped. Press Start to go on where it stopped: finished files are not repeated.")
+        elif self.mode == "check" and code == 0:
+            self.bar["value"] = 100
+            self._status("The check is done. Press 'Copy the log' and paste it into the chat if something looks wrong, or press Start.")
+            if self.saved and Path(self.saved).parent.is_dir():
+                self.folder_btn.configure(state="normal")
+            return
         elif code == 0 and ready:
             self.bar["value"] = 100
             self._status(f"Done. The report is ready: {self.report}")
         else:
-            self._status(f"The analysis did not finish (exit code {code}). The last lines of the log below say why.", bad=True)
+            what = "check" if self.mode == "check" else "analysis"
+            self._status(f"The {what} did not finish (exit code {code}). The last lines of the log below say why.", bad=True)
         if ready:
             self.report_btn.configure(state="normal")
             self.folder_btn.configure(state="normal")
@@ -299,8 +347,16 @@ class App:
             self.show_report(self.report)
 
     def open_folder(self):
-        if self.report:
-            self.show_folder(str(Path(self.report).parent))
+        target = self.report or self.saved
+        if target:
+            self.show_folder(str(Path(target).parent))
+
+    def copy_log(self):
+        """The whole log onto the clipboard, to paste into a message."""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.log.get("1.0", "end-1c"))
+        self.root.update()
+        self._status("The log is copied: paste it into your message.")
 
     def close(self):
         if self.job is not None:

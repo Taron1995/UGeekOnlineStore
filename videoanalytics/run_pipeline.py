@@ -12,11 +12,12 @@ VIDEOS = r"D:\footage"  # a video file, or the folder with the recordings (searc
 CONFIG = "cameras.yaml"  # only for the manual route: a copy of cameras.example.yaml with your cameras, zones and lamps
 MODEL = "models/yolox_tiny.onnx"  # person detector
 OUT = "out"
-STEP = "analyze"  # analyze = everything in one step (just set VIDEOS).  Manual route: models -> scan -> snap -> trial -> run
+STEP = "analyze"  # analyze = everything in one step (just set VIDEOS); doctor = check the files first.  Manual route: models -> scan -> snap -> trial -> run
 # ---------------------------------------------------------------------------------------------------------------------
 
 COMMON = ["--config", CONFIG, "--videos", VIDEOS]
 STEPS = {
+    "doctor": ["doctor", VIDEOS],  # 10-60 s check of the recordings; prints a text (and saves doctor.txt) to read or to send if something is wrong
     "analyze": ["analyze", VIDEOS],  # learns the scene by itself, analyses, opens the report (results: <folder>/_analysis)
     "gui": ["gui", VIDEOS],  # the same in a window
     "models": ["models", "--pose"],  # downloads yolox_tiny.onnx (+ the MediaPipe pose model into models/)

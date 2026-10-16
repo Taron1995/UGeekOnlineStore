@@ -1,4 +1,4 @@
-"""python -m videoanalytics scan | snap | run | report | models | frames | split-coco | train | probe  -  see README.md"""
+"""python -m videoanalytics analyze | gui | doctor | scan | snap | run | report | models | frames | split-coco | train | probe  -  see README.md"""
 from __future__ import annotations
 
 import argparse
@@ -8,11 +8,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import pipeline
-from .analyze import analyze, ensure_model, run_analysis
+from .analyze import analyze, doctor, ensure_model, run_analysis
 from .config import DEFAULTS, normalize_camera, read_config
 from .paths import models_dir
 from .report import write_reports
-from .sources import discover
+from .sources import discover, parse_start_arg
 from .storage import merge_shards
 from .tools import extract_frames, fetch_models, probe_activity, snapshot, split_coco
 from .video import active_intervals, fmt_ts
@@ -112,10 +112,21 @@ def cmd_run(a):
         cmd_report(a)
 
 
+def one_camera_of(a):
+    """--camera-name NAME or --one-camera: every file is a part of one camera ('' = named after the folder)."""
+    return a.camera_name if a.camera_name else ("" if a.one_camera else None)
+
+
 def cmd_analyze(a):
     analyze(a.paths, out=a.out, config=a.config, model=a.model, workers=a.workers, open_report=not a.no_open, auto=not a.no_auto,
             rediscover=a.rediscover, learn_minutes=a.learn_minutes, chunk_min=a.chunk_min, hours=parse_hours(a.hours) if a.hours else None,
-            fps=a.fps, conf=a.conf, clips=not a.no_clips, hw_decode=a.hw_decode, no_gate=a.no_gate, time_regex=a.time_regex)
+            fps=a.fps, conf=a.conf, clips=not a.no_clips, hw_decode=a.hw_decode, no_gate=a.no_gate, time_regex=a.time_regex,
+            start=a.start, one_camera=one_camera_of(a))
+
+
+def cmd_doctor(a):
+    doctor(a.paths, out=a.out, model=a.model, workers=a.workers, hours=parse_hours(a.hours) if a.hours else None, time_regex=a.time_regex,
+           start=a.start, one_camera=one_camera_of(a), bench=not a.no_bench)
 
 
 def cmd_gui(a):
@@ -211,6 +222,13 @@ def cmd_probe(a):
     probe_activity(srcs[0], cams[srcs[0]["camera"]], PersonDetector(a.model, conf=opts["conf"]).detect, a.method, pose, a.start, a.seconds)
 
 
+def start_arg(text: str) -> float:
+    try:
+        return parse_start_arg(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="videoanalytics", description="Offline video analytics for CCTV footage")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -222,6 +240,12 @@ def main(argv=None):
             p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")
             p.add_argument("--camera", nargs="*", help="only these cameras")
         p.add_argument("--out", default="out")
+
+    def names(p):
+        p.add_argument("--start", type=start_arg, metavar="'2026-10-01 08:00'",
+                       help="when the files that carry no date/time in their name were recorded (they follow each other from there)")
+        p.add_argument("--one-camera", action="store_true", help="all files are parts of ONE camera (default: cameras are told apart by the file names)")
+        p.add_argument("--camera-name", help="like --one-camera, with this name for the camera")
 
     def tuning(p):
         p.add_argument("--fps", type=float, help="processed frames per second (default 3)")
@@ -260,8 +284,20 @@ def main(argv=None):
     p.add_argument("--learn-minutes", type=float, default=6, help="footage sampled per camera for scene learning")
     p.add_argument("--chunk-min", type=float, default=20, help="cut recordings longer than this into chunks so all cores are used (0 = off)")
     p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")
+    names(p)
     tuning(p)
     p.set_defaults(f=cmd_analyze)
+
+    p = sub.add_parser("doctor", help="CHECK FIRST: reads your recordings, looks at a few closely, measures the speed, prints one text to send if something is wrong")
+    p.add_argument("paths", nargs="+", help="video file(s) and/or folder(s)")
+    p.add_argument("--out", help="folder for doctor.txt (default: where the results of analyze would go)")
+    p.add_argument("--model")
+    p.add_argument("--workers", type=int)
+    p.add_argument("--hours", help="only these hours of the day count, e.g. 8-20")
+    p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")
+    p.add_argument("--no-bench", action="store_true", help="skip the 15 s speed test (and the model download it may need)")
+    names(p)
+    p.set_defaults(f=cmd_doctor)
 
     p = sub.add_parser("gui", help="a window: choose videos / a folder, press Start, read the report (no command line needed)")
     p.add_argument("paths", nargs="*", help="videos / folders to put in the list at once")

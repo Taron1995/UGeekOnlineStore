@@ -9,7 +9,12 @@ from pathlib import Path
 
 import cv2
 
-VIDEO_EXT = {".mp4", ".avi", ".mkv", ".mov", ".ts", ".m4v", ".mpg", ".mpeg", ".wmv", ".flv"}
+from .video import open_capture
+
+# Recorder / camera formats are listed too (.dav, .h264, ...): if the bundled FFmpeg cannot read one, the file is reported as unreadable
+# with a hint, instead of being silently ignored.
+VIDEO_EXT = {".mp4", ".avi", ".mkv", ".mov", ".ts", ".m4v", ".mpg", ".mpeg", ".wmv", ".flv",
+             ".dav", ".h264", ".264", ".h265", ".265", ".asf", ".webm", ".3gp", ".mts", ".m2ts"}
 # 20261001_080000 | 2026-10-01_08-00-00 | 2026-10-01/08.00.00 (path separators become '_')
 TS_RE = re.compile(r"(?<!\d)(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})[ T_\-.]*(\d{2})[-_.:]?(\d{2})[-_.:]?(\d{2})(?!\d)")
 DATE_RE = re.compile(r"(?<!\d)(20\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?!\d)")
@@ -50,9 +55,25 @@ def camera_for(rel: str, cameras: dict):
     return best
 
 
-def probe(path: str):
-    """(fps, duration_s), or None if the file cannot be opened/decoded (corrupt, partial, unsupported codec)."""
-    cap = cv2.VideoCapture(path)
+START_ARG = re.compile(r"^\s*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T_]+(\d{1,2})[:.hH-](\d{1,2})(?:[:.-](\d{1,2}))?)?\s*$")
+
+
+def parse_start_arg(text: str) -> float:
+    """'2026-10-01 08:30' / '2026-10-01 08:30:15' / '2026-10-01' -> wall-clock seconds (as in naive_epoch)."""
+    m = START_ARG.match(text or "")
+    if not m:
+        raise ValueError(f"cannot read the start time {text!r}: write it like 2026-10-01 08:30 or 2026-10-01 08:30:15")
+    y, mo, d, h, mi, s = (int(g) if g else 0 for g in m.groups())
+    try:
+        return naive_epoch(datetime(y, mo, d, h, mi, s))
+    except ValueError as e:
+        raise ValueError(f"{text!r} is not a valid date and time ({e})") from None
+
+
+def probe_full(path: str):
+    """{'fps', 'duration', 'known'} or None if the file cannot be opened/decoded (corrupt, partial, unsupported codec). 'known' is False for
+    files that do not say how long they are (raw .h264 streams, some fragmented files): the duration is then a guess of one hour."""
+    cap = open_capture(path)
     ok = cap.isOpened() and cap.grab()
     fps = cap.get(cv2.CAP_PROP_FPS)
     frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -60,10 +81,22 @@ def probe(path: str):
     if not ok:
         return None
     fps = fps if 1 <= fps <= 120 else 25.0
-    return fps, (frames / fps if frames and frames > 0 else 3600.0)
+    known = bool(frames and frames > 0)
+    return dict(fps=fps, duration=frames / fps if known else 3600.0, known=known)
+
+
+def probe(path: str):
+    """(fps, duration_s), or None if the file cannot be opened/decoded."""
+    info = probe_full(path)
+    return None if info is None else (info["fps"], info["duration"])
 
 
 RESULT_MARKS = ("analytics.db", "cameras.auto.yaml")  # a folder holding one of these is a results folder of an earlier run
+
+
+def _natural(p: Path):
+    """Sort key: part2 before part10."""
+    return [int(t) if i % 2 else t.lower() for i, t in enumerate(re.split(r"(\d+)", str(p)))]
 
 
 def list_videos(root: Path, only=None, exclude=()):
@@ -79,7 +112,7 @@ def list_videos(root: Path, only=None, exclude=()):
         return results[d]
 
     out = []
-    for p in sorted(root.rglob("*")):
+    for p in sorted(root.rglob("*"), key=_natural):
         if p.suffix.lower() not in VIDEO_EXT or not p.is_file():
             continue
         r = p.resolve()
@@ -89,30 +122,40 @@ def list_videos(root: Path, only=None, exclude=()):
     return out
 
 
-def _source(p: Path, rel: str, cam: str, time_regex, issues: dict):
-    info = probe(str(p))
+def _source(p: Path, rel: str, cam: str, time_regex, issues: dict, manual: dict | None = None):
+    """manual = {'start': epoch, 'next': {}} (--start): files without a time in their name follow each other from that moment, per camera."""
+    info = probe_full(str(p))
     if info is None:
         issues["unreadable"].append(rel)
         return None
-    fps, dur = info
+    fps, dur = info["fps"], info["duration"]
     start = parse_start(rel, time_regex)
-    if start is None:  # last resort: assume mtime is the end of the recording
+    if start is None and manual is not None:
+        start = manual["next"].get(cam, manual["start"])
+        manual["next"][cam] = start + dur
+        issues["manual_time"].append(rel)
+    elif start is None:  # last resort: assume mtime is the end of the recording
         start = naive_epoch(datetime.fromtimestamp(os.path.getmtime(p))) - dur
         issues["no_timestamp"].append(rel)
-    return dict(camera=cam, path=str(p), rel=rel, start_ts=start, duration=dur, fps=fps)
+    return dict(camera=cam, path=str(p), rel=rel, start_ts=start, duration=dur, fps=fps, duration_known=info["known"])
 
 
-def discover(root: str, cameras: dict, time_regex: str | None = None, only=None, exclude=()):
+def new_issues() -> dict:
+    return dict(unmatched=[], no_timestamp=[], unreadable=[], manual_time=[])
+
+
+def discover(root: str, cameras: dict, time_regex: str | None = None, only=None, exclude=(), start: float | None = None):
     """Returns (sources sorted by time, issues dict). Each source is a plain dict (picklable)."""
     root_p = Path(root)
-    srcs, issues = [], dict(unmatched=[], no_timestamp=[], unreadable=[])
+    srcs, issues = [], new_issues()
+    manual = None if start is None else {"start": start, "next": {}}
     for p in list_videos(root_p, only, exclude):
         rel = str(p.relative_to(root_p))
         cam = camera_for(rel, cameras)
         if cam is None:
             issues["unmatched"].append(rel)
             continue
-        s = _source(p, rel, cam, time_regex, issues)
+        s = _source(p, rel, cam, time_regex, issues, manual)
         if s:
             srcs.append(s)
     srcs.sort(key=lambda s: (s["start_ts"], s["camera"]))
@@ -124,6 +167,10 @@ def _clean(s: str) -> str:
     return re.sub(r"[\W_]+", "_", s, flags=re.UNICODE).strip("_")  # separators (also '_') collapse into one underscore
 
 
+def _has_letter(s: str) -> bool:
+    return any(ch.isalpha() for ch in s)
+
+
 def auto_camera_name(rel: str):
     """cam1_20261001_080000.mp4 -> cam1;  2026-10-01/cam2/08-00-00.mp4 -> cam2;  None when the path says nothing."""
     p = Path(rel.replace("\\", "/"))
@@ -133,33 +180,59 @@ def auto_camera_name(rel: str):
     name = _clean(stem)
     if had_ts:
         name = re.sub(r"_\d{3,4}$", "", name)  # chunk counters: cam1_20261001_080000_001.mp4
-    if name and not name.isdigit():
+    if _has_letter(name):  # "08_00", "001" are times and counters, not camera names
         return name
-    for parent in reversed(p.parent.parts):
+    return _camera_folder(rel)
+
+
+def _camera_folder(rel: str):
+    """The nearest parent folder that can be a camera name (it has a letter and is not a date), else None."""
+    for parent in reversed(Path(rel.replace("\\", "/")).parent.parts):
         n = _clean(parent)
-        if n and not DATEISH_RE.match(parent) and not n.isdigit():
+        if n and not DATEISH_RE.match(parent) and _has_letter(n):
             return n
     return None
 
 
+def assign_names(rels) -> dict:
+    """auto_camera_name for every file. One correction: when files without a time in their name carry the same generic name in
+    different camera folders (cam1/video.mp4, cam2/video.mp4), the folder is the camera."""
+    names = {r: auto_camera_name(r) for r in rels}
+    generic = [r for r in rels if names[r] is not None and not TS_RE.search(Path(r.replace("\\", "/")).stem)]
+    folders: dict = {}
+    for r in generic:
+        folders.setdefault(names[r], set()).add(_camera_folder(r))
+    for r in generic:
+        if len(folders[names[r]] - {None}) >= 2:
+            names[r] = _camera_folder(r) or names[r]
+    return names
 
-def discover_auto(root: str, only=None, time_regex: str | None = None, exclude=()):
+
+
+def discover_auto(root: str, only=None, time_regex: str | None = None, exclude=(), start: float | None = None,
+                  one_camera: str | None = None):
     """Cameras are taken from the file names. Returns (sources, issues, cameras) where cameras maps each name to {'match': regex}
-    that selects exactly its files again (stored in cameras.auto.yaml so an edited setup keeps working)."""
+    that selects exactly its files again (stored in cameras.auto.yaml so an edited setup keeps working).
+    one_camera: every file is one camera (parts of one recording); the string is its name, '' = the folder name."""
     root_p = Path(root)
-    srcs, issues = [], dict(unmatched=[], no_timestamp=[], unreadable=[])
+    srcs, issues = [], new_issues()
+    manual = None if start is None else {"start": start, "next": {}}
     fallback = _clean(root_p.name) or "camera"
+    files = [(p, str(p.relative_to(root_p))) for p in list_videos(root_p, only, exclude)]
     named, nameless = {}, []
-    for p in list_videos(root_p, only, exclude):
-        rel = str(p.relative_to(root_p))
-        n = auto_camera_name(rel)
-        (nameless if n is None else named.setdefault(n, [])).append((p, rel))
+    if one_camera is not None:
+        nameless = files
+        fallback = _clean(one_camera) or fallback
+    else:
+        names = assign_names([rel for _, rel in files])
+        for p, rel in files:
+            (nameless if names[rel] is None else named.setdefault(names[rel], [])).append((p, rel))
     groups = dict(named)
     if nameless:
         groups.setdefault(fallback, []).extend(nameless)
     for cam, files in groups.items():
         for p, rel in files:
-            s = _source(p, rel, cam, time_regex, issues)
+            s = _source(p, rel, cam, time_regex, issues, manual)
             if s:
                 srcs.append(s)
     srcs.sort(key=lambda s: (s["start_ts"], s["camera"]))

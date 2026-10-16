@@ -18,6 +18,7 @@ Everything is offline; only permissive licenses (see *Licenses*). No face recogn
 
 **Shortest way:** `python -m videoanalytics analyze <video-or-folder>` (or drag the video onto `analyze_video.bat`, or `python -m videoanalytics gui`).
 The program learns where people work and which machines there are, analyses everything and opens the report - see *Quick start*.
+First time with your own files, or something looks wrong: `python -m videoanalytics doctor <video-or-folder>` (a 10-60 second check, see *Quick start*).
 
 ## Install
 
@@ -72,6 +73,28 @@ Other options: `--config cameras.yaml` (your own file, see below), `--no-auto` (
 What no automatic step can know: your **work schedule** (absences), the real machine state (lamp and motion are proxies), and the **number of parts**
 (the part detector has to be trained on your annotated frames, see *Workpiece counting*).
 
+### Recordings straight from a camera, and when something looks wrong
+
+```
+python -m videoanalytics doctor D:\footage      # 10-60 seconds, even for days of footage; the window has "Check the videos first"
+```
+`doctor` reads every recording, looks closely at the first / middle / last one of each camera (codec, size, frame rate, how fast it decodes and seeks,
+whether the picture has colour), measures the speed of this computer and explains in plain words what it found:
+
+* **no date/time in the file names** (typical for downloads): the file modification time would be used, which is when you saved the file. Say when it was
+  recorded: `--start "2026-10-01 08:00"`; files without a time then follow each other in name order (part2 before part10).
+* **several parts of ONE camera** (`video1.mp4`, `video2.mp4`, ...): the cameras are told apart by the file names, so these would be several cameras.
+  `--one-camera` (or `--camera-name Lathe3`) makes them one. `doctor` says so when the names differ only by a number or when the pictures look alike.
+  Names that contain a time (`cam1_20261001_080000.mp4`) and per-camera folders (`cam1/video.mp4`, `cam2/video.mp4`) are told apart reliably.
+* **recorder formats** (`.dav`, raw `.h264`): they are tried, and if they cannot be read the message says how to convert them
+  (`ffmpeg -i input.dav -c copy output.mp4`, or export MP4 from the recorder's own software). A file that does not say how long it is is read once from
+  start to end; a path with Armenian / Russian letters that Windows cannot open should be copied to an ASCII-only folder such as `C:\videos`.
+* a picture without colour (night / infrared), slow decoding, small pictures, gaps between the files, a view shared by several "cameras".
+
+The text is saved as `doctor.txt`; `analyze` writes the same text plus what it learned and measured as `diagnostics.txt` in the results folder, even if a
+later step fails. **If something looks wrong, send that file** (or press "Copy the log" in the window): it holds relative file names, numbers and
+versions, no pictures and no folder names of your computer.
+
 ## Full control: your own cameras.yaml
 
 For exact zones, several lamps, a schedule, workpiece counting or pose: write the config yourself (or start from `cameras.auto.yaml`, it has the same format).
@@ -95,8 +118,8 @@ Any folder tree, searched recursively. Two things are recovered from each **rela
 * **camera** - the camera name from the config appears as a whole word (`cam1` matches `cam1_...mp4` and `/cam1/`, not `cam10` or `webcam1`).
   For other naming add `match: "regex"` to the camera.
 * **start time** - recognised: `20261001_080000`, `2026-10-01_08-00-00`, `2026-10-01_08.00.00`, `20261001080000`, and date folder + time file
-  name (`2026-10-01/cam1/08-00-00.mp4`). Anything else: `--time-regex` (6 groups: Y m d H M S). If no time is found the file modification time is
-  used and `scan` warns. Times are treated as wall-clock (no time zones).
+  name (`2026-10-01/cam1/08-00-00.mp4`). Anything else: `--time-regex` (6 groups: Y m d H M S), or `--start "2026-10-01 08:00"` when the files carry
+  no time at all. If no time is found the file modification time is used and `scan` / `doctor` warn. Times are treated as wall-clock (no time zones).
 
 `scan` prints files per camera, hours of video, date range, the features configured per camera and every problem (unmatched, no timestamp,
 unreadable files). **Run it first.**
@@ -195,6 +218,9 @@ Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`
 * Lamp colours (green/yellow/red, blinking), motion machine, cycles, gatherings, occupancy, schedule/absence, idle runs, report numbers: unit tests with
   mutation checks (the tests fail when the logic is broken on purpose).
 * Gatherings on real footage: groups outside the work zone are found and the evidence frame shows them.
+* Camera codecs and containers, made with ffmpeg from the real pedestrian clip and run through `doctor` and `analyze` without errors: H.264 in MP4 (also 25 fps with a
+  250-frame key interval, and 1080p), in MKV, in MPEG-TS and fragmented MP4; H.265 / HEVC; a raw `.h264` stream (no length, no frame rate: flagged, read once).
+  OpenCV's FFmpeg messages about not-yet-decodable frames are switched off.
 * One-step `analyze` (unit tests with mutation checks, plus real runs): a video in -> setup learned -> report out. On synthetic scenes the stations (people standing
   still), a stack light and a moving machine are found while decoys are ignored (an always-on LED, a blinking REC dot, a static two-colour sign, traffic cones
   that a passing person hides for a moment, a clock overlay, a short stop of less than 40 s), also when the operator hides most of the machine. On the real
@@ -230,6 +256,6 @@ fine-tuned on your own footage (workpieces) avoids that for the part detector.
 ## Tests
 
 `pytest tests` (tracker, zones/lines, detector post-processing, path/time parsing, active hours, config validation, lamp, machine/cycles, occupancy,
-gatherings, inactivity, schedule/absence, report and timelines, tools, workpieces, scene learning, the one-step run, the window). Tests that need
+gatherings, inactivity, schedule/absence, report and timelines, tools, workpieces, scene learning, the one-step run, camera-style inputs, doctor / diagnostics, the window). Tests that need
 MediaPipe / supervision skip when the package is missing; the window tests need a display (Linux without one: `xvfb-run python -m pytest tests/test_gui.py`)
 and skip without it.

@@ -39,6 +39,9 @@ def test_one_video_in_report_out(tmp_path, capsys):
     assert "Learning the scene" in text and "2 station(s)" in text and f"REPORT: {report}" in text
     html = report.read_text(encoding="utf-8")
     assert "cam1" in html and "lamp1" in html and "spot1" in html
+    diag = (out / "diagnostics.txt").read_text(encoding="utf-8")  # what to send if something looks wrong
+    assert "== Computer" in diag and "== Samples" in diag and "== Result" in diag and "learned 2 station(s)" in diag and "speed of this run" in diag
+    assert f"Diagnostics (send this file if something looks wrong): {out / 'diagnostics.txt'}" in text
 
 
 def test_second_run_reuses_the_setup_and_finished_work(tmp_path, capsys):
@@ -238,3 +241,43 @@ def test_time_estimate_is_given_for_long_jobs_only(tmp_path, monkeypatch):
         raise RuntimeError("model cannot be loaded")
 
     assert estimate(long_src, cams, opts, no_model, 4) is None  # a failing test run must not stop the real work
+
+
+def test_diagnostics_exist_even_when_a_later_step_fails(tmp_path, monkeypatch):
+    v = tmp_path / "cam1_20261001_080000.mp4"
+    scene(v, 10)
+
+    def boom(*a, **k):
+        raise RuntimeError("learning failed")
+
+    monkeypatch.setattr(an, "learn_cameras", boom)
+    with pytest.raises(RuntimeError, match="learning failed"):
+        run(tmp_path, v)
+    text = (tmp_path / "cam1_20261001_080000_analysis" / "diagnostics.txt").read_text(encoding="utf-8")
+    assert "== Computer" in text and "== Samples" in text and "== Result" not in text  # the check came first, the outcome did not happen
+
+
+def test_problems_are_printed_before_the_long_part(tmp_path, capsys):
+    scene(tmp_path / "video1.mp4", 10)
+    run(tmp_path, tmp_path / "video1.mp4", auto=False)
+    out = capsys.readouterr().out
+    assert "! 1 file(s) have no date/time in their name" in out and "--start" in out
+
+
+def test_parts_of_one_camera_downloaded_without_times(tmp_path, capsys):
+    for n in ("video1", "video2", "video10"):
+        scene(tmp_path / f"{n}.mp4", 12)
+    run(tmp_path, tmp_path, one_camera="Lathe 3", start="2026-10-01 08:00", auto=False)
+    out = capsys.readouterr().out
+    assert "3 recording(s) of 1 camera(s)" in out and "Lathe_3: 3 file(s)" in out and "(--start) is used" in out
+    con = sqlite3.connect(tmp_path / "_analysis" / "analytics.db")
+    starts = [r[0] for r in con.execute("SELECT start_ts FROM files ORDER BY start_ts")]
+    t0 = 1790841600.0  # 2026-10-01 08:00 as wall-clock seconds
+    assert starts == pytest.approx([t0, t0 + 12, t0 + 24], abs=0.5)  # one after the other, video10 after video2
+    assert con.execute("SELECT COUNT(DISTINCT camera) FROM minutes").fetchone() == (1,)
+
+
+def test_a_wrong_start_is_refused_with_the_format(tmp_path):
+    scene(tmp_path / "a.mp4", 5)
+    with pytest.raises(ValueError, match="2026-10-01 08:30"):
+        run(tmp_path, tmp_path / "a.mp4", start="tomorrow")

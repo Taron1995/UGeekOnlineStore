@@ -8,6 +8,7 @@ import os
 import time
 import types
 import webbrowser
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -15,9 +16,10 @@ import yaml
 from . import pipeline
 from .autoconfig import build_camera_config, learn_scene
 from .config import DEFAULTS, check_config, normalize_camera, read_config
+from .diagnostics import doctor_text, inspect_samples, notes, result_text
 from .paths import find_model, models_dir
 from .report import _dur, write_reports
-from .sources import VIDEO_EXT, discover, discover_auto
+from .sources import VIDEO_EXT, discover, discover_auto, parse_start_arg
 from .storage import SCHEMA_VERSION, clean_stale, merge_shards, shard_glob, shard_meta, shard_path
 from .tools import MODEL_URLS, fetch_models, snapshot
 from .video import active_intervals, fmt_ts
@@ -56,7 +58,9 @@ def resolve_inputs(paths):
         if p.is_dir():
             vids = [f for f in sorted(p.rglob("*")) if f.suffix.lower() in VIDEO_EXT and f.is_file()]
             if not vids:
-                raise SystemExit(f"no video files in {p}")
+                kinds = Counter(f.suffix.lower() or "(no extension)" for f in p.rglob("*") if f.is_file()).most_common(6)
+                raise SystemExit(f"no video files in {p}" + (f"; the files there are: {', '.join(f'{e} ({n})' for e, n in kinds)}" if kinds else " (it is empty)")
+                                 + "\nVideo formats read: " + " ".join(sorted(VIDEO_EXT)))
             files += vids
             roots.append(p.resolve())
         else:
@@ -118,7 +122,8 @@ def plan_tasks(srcs, cams, opts, out: Path, chunk_s: float = 0.0):
         if not active_intervals(s["start_ts"], s["duration"], opts["active_hours"]):
             continue
         fp = fingerprint(cams[s["camera"]], opts, chunk_s)
-        wanted = {shard_path(out, s["camera"], s["rel"], seg): seg for seg in split_segments(s["duration"], chunk_s)}
+        # a file that does not say how long it is is read once from its start to its end: chunks of a guessed hour would read the same frames again
+        wanted = {shard_path(out, s["camera"], s["rel"], seg): seg for seg in split_segments(s["duration"] if s.get("duration_known", True) else 0.0, chunk_s)}
         for old in shard_glob(out, s["camera"], s["rel"]):  # shards of another chunking would be counted twice
             if old not in wanted:
                 old.unlink(missing_ok=True)
@@ -213,22 +218,29 @@ def cameras_summary(srcs, hours=None) -> str:
     return "\n".join(lines)
 
 
-def estimate(srcs, cams, opts, make_detect, workers, bench_s: float = 15.0):
-    """A line with the wall-clock upper bound for the whole job, from a short test of one recording (decoder + detector on every sampled frame,
-    one thread, no motion gate). None when the job is short or the test could not run. make_detect() returns the detector function."""
-    total = sum(b - a for s in srcs for a, b in active_intervals(s["start_ts"], s["duration"], opts["active_hours"]))
-    if total < 2 * 3600:
-        return None
+def benchmark(srcs, cams, opts, make_detect, bench_s: float = 15.0):
+    """CPU-seconds needed per second of video (decoder + detector on every sampled frame, one thread, no motion gate), measured on a short
+    piece of one recording; None when it cannot be measured. make_detect() returns the detector function."""
     s = srcs[len(srcs) // 2]
     try:
         _, _, meta = pipeline.process_video({k: v for k, v in s.items() if k != "seg"}, cams[s["camera"]], {**opts, "gate_motion": -1.0, "clips": False},
                                             make_detect(), None, limit_s=bench_s)
-    except Exception:  # noqa: BLE001 - an estimate must never stop the real work
+    except Exception:  # noqa: BLE001 - a measurement must never stop the real work
         return None
-    if meta["processed_s"] < 3:
+    return meta["elapsed_s"] / meta["processed_s"] if meta["processed_s"] >= 3 else None
+
+
+def estimate(srcs, cams, opts, make_detect, workers, bench_s: float = 15.0):
+    """A line with the wall-clock upper bound for the whole job, from a short test of one recording. None when the job is short or the
+    test could not run."""
+    total = sum(b - a for s in srcs for a, b in active_intervals(s["start_ts"], s["duration"], opts["active_hours"]))
+    if total < 2 * 3600:
+        return None
+    cost = benchmark(srcs, cams, opts, make_detect, bench_s)
+    if cost is None:
         return None
     w = workers or os.cpu_count() or 1
-    wall = total * meta["elapsed_s"] / meta["processed_s"] / w
+    wall = total * cost / w
     return (f"Estimate: about {_dur(wall)} for {_dur(total)} of video on {w} worker(s) - an upper bound from a quick test (the motion gate usually makes it "
             f"faster; cameras with workpiece counting are slower). To shorten it: --hours 8-20 (working hours only), --fps 2, or do one camera / one day first.")
 
@@ -286,15 +298,40 @@ def _describe(info: dict) -> str:
 
 
 # ---- the whole thing --------------------------------------------------------------------------------------------------
+def _start_ts(start):
+    return parse_start_arg(start) if isinstance(start, str) else start
+
+
+def _inspect(srcs):
+    try:
+        return inspect_samples(srcs)
+    except Exception as e:  # noqa: BLE001 - looking closely must never stop the work
+        print(f"(could not look closely at the recordings: {e!r})", flush=True)
+        return []
+
+
+def write_diagnostics(out: Path, srcs, issues, samples, paths, opts, workers, finished: bool = False):
+    """diagnostics.txt next to the results: written right after the recordings were read (so it exists even if a later step fails)
+    and again at the end, with the outcome."""
+    try:
+        text = doctor_text(srcs, issues, paths=paths, samples=samples, hours=opts["active_hours"], workers=workers)
+        (out / "diagnostics.txt").write_text(text + (result_text(out) if finished else ""), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        print(f"(diagnostics.txt could not be written: {e!r})", flush=True)
+
+
 def analyze(paths, *, out=None, config=None, model=None, workers=None, open_report=True, auto=True, rediscover=False,
             learn_minutes: float = 6.0, chunk_min: float = 20.0, hours=None, fps=None, conf=None, clips=True, hw_decode=False,
-            no_gate=False, time_regex=None, detect=None, limit_files=None) -> Path:
-    """Analyse the given videos / folders end to end and return the path of report.html."""
+            no_gate=False, time_regex=None, detect=None, limit_files=None, start=None, one_camera=None) -> Path:
+    """Analyse the given videos / folders end to end and return the path of report.html.
+    start: '2026-10-01 08:00', when files that carry no time in their name were recorded (they follow each other from there);
+    one_camera: all files are parts of one camera (its name; '' = the folder name)."""
     t_all = time.time()
     root, files = resolve_inputs(paths)
     out = Path(out) if out else default_out(root, paths)
     out.mkdir(parents=True, exist_ok=True)
     print(f"Input: {len(files)} video file(s) under {root}\nResults: {out}", flush=True)
+    start_ts = _start_ts(start)
 
     model_path = None if detect is not None else ensure_model(model)
     overrides = {k: v for k, v in dict(fps=fps, conf=conf, active_hours=hours, hw_decode=hw_decode or None, clips=None if clips else False,
@@ -308,20 +345,22 @@ def analyze(paths, *, out=None, config=None, model=None, workers=None, open_repo
         print(f"Using your setup: {cfg_path}", flush=True)
         opts = {**DEFAULTS, **(cfg.get("options") or {}), **overrides}
         cams = {k: normalize_camera(v) for k, v in cfg["cameras"].items()}
-        srcs, issues = discover(str(root), cams, time_regex, only=files, exclude=[out])
+        srcs, issues = discover(str(root), cams, time_regex, only=files, exclude=[out], start=start_ts)
     else:
         opts = {**DEFAULTS, **overrides}
-        srcs, issues, match = discover_auto(str(root), files, time_regex, exclude=[out])
+        srcs, issues, match = discover_auto(str(root), files, time_regex, exclude=[out], start=start_ts, one_camera=one_camera)
         cfg = None
-    for key, text in (("unreadable", "cannot be opened/decoded and are skipped"), ("unmatched", "match no camera of the setup"),
-                      ("no_timestamp", "have no date/time in their name: the file modification time is used")):
-        if issues[key]:
-            print(f"! {len(issues[key])} file(s) {text}, e.g. {issues[key][:3]}")
     if not srcs:
+        for n in notes([], issues, [], paths):
+            print(f"! {n}", flush=True)
         raise SystemExit("no readable video files")
     hours_total = sum(s["duration"] for s in srcs) / 3600
     print(f"{len(srcs)} recording(s) of {len({s['camera'] for s in srcs})} camera(s), {hours_total:.1f} h of video", flush=True)
     print(cameras_summary(srcs, opts["active_hours"]), flush=True)
+    samples = _inspect(srcs)
+    for n in notes(srcs, issues, samples, paths):
+        print(f"! {n}", flush=True)
+    write_diagnostics(out, srcs, issues, samples, paths, opts, workers)
 
     if cfg is None:
         if auto:
@@ -337,8 +376,32 @@ def analyze(paths, *, out=None, config=None, model=None, workers=None, open_repo
     run_analysis(cams, opts, srcs, out, model_path, workers, limit_files=limit_files, chunk_s=chunk_s, detect=detect)
     merge_shards(out)
     report = write_reports(out, 300.0, cfg)
+    write_diagnostics(out, srcs, issues, samples, paths, opts, workers, finished=True)
     print(f"Done in {(time.time() - t_all) / 60:.1f} min.", flush=True)
+    print(f"Diagnostics (send this file if something looks wrong): {out / 'diagnostics.txt'}", flush=True)
     print(f"REPORT: {report}", flush=True)  # the GUI reads this line
     if open_report:
         webbrowser.open(report.resolve().as_uri())
     return report
+
+
+def doctor(paths, *, out=None, model=None, workers=None, hours=None, time_regex=None, start=None, one_camera=None, bench=True,
+           detect=None) -> Path:
+    """The pre-flight check, 10-60 seconds even for days of footage: reads every recording, looks closely at a few, measures the speed
+    of this computer, prints one text and saves it as doctor.txt next to where the results would go."""
+    root, files = resolve_inputs(paths)
+    out = Path(out) if out else default_out(root, paths)
+    srcs, issues, _ = discover_auto(str(root), files, time_regex, exclude=[out], start=_start_ts(start), one_camera=one_camera)
+    samples = _inspect(srcs)
+    cost = None
+    if bench and srcs:
+        opts = {**DEFAULTS, **({"active_hours": hours} if hours else {})}
+        cams = {c: normalize_camera({}) for c in {s["camera"] for s in srcs}}
+        cost = benchmark(srcs, cams, opts, (lambda: detect) if detect is not None else (lambda: _load_detector(ensure_model(model), opts["conf"])))
+    text = doctor_text(srcs, issues, paths=paths, samples=samples, hours=hours, cost=cost, workers=workers)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "doctor.txt"
+    path.write_text(text, encoding="utf-8")
+    print(text, flush=True)
+    print(f"Saved as {path}", flush=True)
+    return path

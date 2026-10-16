@@ -44,7 +44,7 @@ def fetch_models(names, dest: str = "models"):
 
 
 def read_frame(video: str, at_s: float):
-    cap = cv2.VideoCapture(video)
+    cap = open_capture(video)
     cap.set(cv2.CAP_PROP_POS_MSEC, at_s * 1000)
     ok, f = cap.read()
     if not ok:

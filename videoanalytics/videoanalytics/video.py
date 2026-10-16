@@ -1,6 +1,7 @@
 """Small video helpers shared by the pipeline and the analyzers."""
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,12 +34,31 @@ def active_intervals(start_ts: float, duration: float, hours):
     return merged
 
 
+def _ascii_path(path: str) -> str:
+    """Windows: some OpenCV builds cannot open a name with non-ASCII letters (Armenian, Russian, ...); the short 8.3 form of the same
+    path is plain ASCII. Anywhere else, or if there is no short form, the path is returned unchanged."""
+    if os.name != "nt" or path.isascii():
+        return path
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        n = ctypes.windll.kernel32.GetShortPathNameW(os.path.abspath(path), buf, 1024)
+        return buf.value if 0 < n < 1024 else path
+    except Exception:  # noqa: BLE001
+        return path
+
+
 def open_capture(path: str, hw: bool = False):
     if hw:  # D3D11VA/VAAPI if the OpenCV build has it; silently falls back to software
         cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY])
         if cap.isOpened():
             return cap
-    return cv2.VideoCapture(path)
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():  # only now (and only on Windows, for non-ASCII names) is a second attempt made
+        alt = _ascii_path(path)
+        if alt != path:
+            cap = cv2.VideoCapture(alt)
+    return cap
 
 
 def save_clip(path: str, t_rel: float, out_path: Path, pad: float, hw: bool = False):

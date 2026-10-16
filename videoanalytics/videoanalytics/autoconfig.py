@@ -25,7 +25,8 @@ MIN_VISIBLE = 8  # frames a pixel must be visible (not behind a person) before i
 
 def sample_windows(srcs, total_s: float = 360.0, k: int = 6, hours=None):
     """[(src, start_s, length_s)] spread evenly over the (active) footage of one camera; the whole footage if it is short."""
-    spans = [(s, a, b) for s in srcs for a, b in active_intervals(s["start_ts"], s["duration"], hours) if b > a]
+    # a file that does not say how long it is is only trusted for its first minute (its duration is a guess)
+    spans = [(s, a, b) for s in srcs for a, b in active_intervals(s["start_ts"], s["duration"] if s.get("duration_known", True) else 60.0, hours) if b > a]
     total = sum(b - a for _, a, b in spans)
     if total <= 0:
         return []
