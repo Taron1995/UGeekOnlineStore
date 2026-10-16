@@ -4,7 +4,6 @@ import sqlite3
 from datetime import datetime
 
 import cv2
-import numpy as np
 import pytest
 
 from tests.test_features import make_video
