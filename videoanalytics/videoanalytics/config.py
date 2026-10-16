@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import difflib
+from pathlib import Path
+
+import yaml
 
 from .schedule import parse_hm
 
@@ -160,3 +163,13 @@ def check_config(cfg: dict) -> None:
                 errs.append(f"{w}.workpieces.model: must be nano, small, medium or large (XL/2XL use a non-commercial-friendly licence)")
     if errs:
         raise ConfigError("invalid config:\n  " + "\n  ".join(errs))
+
+
+def read_config(path) -> dict:
+    """Loads and validates a cameras.yaml; exits with every problem listed."""
+    cfg = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        check_config(cfg)
+    except ConfigError as e:
+        raise SystemExit(f"{path}: {e}")
+    return cfg

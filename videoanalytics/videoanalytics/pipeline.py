@@ -32,7 +32,11 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
     ctx = Ctx(src, cam, opts, out_dir)
     st = dict(frames=0, det_frames=0, processed_s=0.0)
 
-    for a, b in active_intervals(src["start_ts"], src["duration"], opts["active_hours"]):
+    intervals = active_intervals(src["start_ts"], src["duration"], opts["active_hours"])
+    seg = src.get("seg")  # (start_s, end_s): one chunk of a long recording, processed by its own worker
+    if seg:
+        intervals = [(max(a, seg[0]), min(b, seg[1])) for a, b in intervals if min(b, seg[1]) > max(a, seg[0])]
+    for a, b in intervals:
         if limit_s is not None and st["processed_s"] >= limit_s:
             break
         if a > 0:
@@ -76,6 +80,10 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
             row[1] += dt * len(ctx.tracks)
             row[2] = max(row[2], len(ctx.tracks))
             row[3] += detected
+            fr = ctx.fine.setdefault(ctx.fine_bin(), [0.0, 0.0, 0])
+            fr[0] += dt
+            fr[1] += dt * len(ctx.tracks)
+            fr[2] = max(fr[2], len(ctx.tracks))
             st["frames"] += 1
             st["det_frames"] += detected
             st["processed_s"] += dt
@@ -83,10 +91,11 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
         for az in analyzers:
             az.finish(ctx)
     cap.release()
-    meta = dict(camera=src["camera"], source=src["rel"], start_ts=src["start_ts"], video_s=src["duration"],
+    meta = dict(camera=src["camera"], source=src["rel"] + (f"#{int(seg[0])}-{int(seg[1])}" if seg else ""), start_ts=src["start_ts"], video_s=src["duration"],
                 processed_s=round(st["processed_s"], 1), frames=st["frames"], det_frames=st["det_frames"],
                 elapsed_s=round(time.time() - t0, 2))
-    tables = dict(minutes=ctx.minutes, zone_minutes=ctx.zone_minutes, machine_minutes=ctx.machine_minutes)
+    tables = dict(minutes=ctx.minutes, zone_minutes=ctx.zone_minutes, machine_minutes=ctx.machine_minutes,
+                  fine=ctx.fine, zone_fine=ctx.zone_fine, machine_fine=ctx.machine_fine)
     return ctx.events, tables, meta
 
 
@@ -124,7 +133,7 @@ def run_task(task: dict) -> dict:
         pose, wp = _extras(cam)
         events, tables, meta = process_video(task["src"], cam, task["opts"], _DET.detect, Path(task["out"]),
                                              pose=pose, workpiece_detect=wp)
-        write_shard(Path(task["shard"]), events, tables, meta)
+        write_shard(Path(task["shard"]), events, tables, {**meta, "config_hash": task.get("config_hash", "")})
         return dict(ok=True, **meta)
     except Exception as e:  # noqa: BLE001
         return dict(ok=False, source=task["src"]["rel"], error=repr(e))

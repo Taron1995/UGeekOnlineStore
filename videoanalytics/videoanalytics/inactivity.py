@@ -57,7 +57,8 @@ class PoseBackend:
         except ImportError as e:
             raise RuntimeError("inactivity.method 'pose' needs MediaPipe: pip install mediapipe "
                                "(or use method: motion)") from e
-        path = Path(model_path or os.environ.get("VIDAN_POSE_MODEL") or DEFAULT_POSE_MODEL)
+        from .paths import find_model
+        path = Path(model_path or os.environ.get("VIDAN_POSE_MODEL") or find_model("pose_landmarker_lite.task") or DEFAULT_POSE_MODEL)
         if not path.exists():
             raise FileNotFoundError(f"pose model not found: {path}. Run: python -m videoanalytics models --pose")
         self._mp = mp

@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from .lamp import LampReader
+from .storage import FINE_S
 from .video import fmt_ts, save_clip
 from .zones import Line, MachineState, Motion, Zone
 
@@ -27,6 +28,9 @@ class Ctx:
     minutes: dict = field(default_factory=dict)  # minute -> [covered_s, people_s, people_max, det_frames]
     zone_minutes: dict = field(default_factory=dict)  # (zone, minute) -> [covered_s, occupied_s, people_s]
     machine_minutes: dict = field(default_factory=dict)  # (machine, minute) -> [work, idle, alarm, wait, work_att, idle_att, cycles]
+    fine: dict = field(default_factory=dict)  # 5 s bin -> [covered_s, people_s, people_max]     (timelines of short recordings)
+    zone_fine: dict = field(default_factory=dict)  # (zone, 5 s bin) -> [covered_s, occupied_s]
+    machine_fine: dict = field(default_factory=dict)  # (machine, 5 s bin) -> [work_s, idle_s]
     n_clips: int = 0
     t_start: float = 0.0  # start of the current pass (file-relative seconds)
     frame: np.ndarray | None = None
@@ -43,6 +47,9 @@ class Ctx:
 
     def minute(self, abs_t: float | None = None) -> int:
         return int((self.abs_t if abs_t is None else abs_t) // 60)
+
+    def fine_bin(self) -> int:
+        return int(self.abs_t // FINE_S)
 
     def zone_row(self, zone: str):
         return self.zone_minutes.setdefault((zone, self.minute()), [0.0, 0.0, 0.0])
@@ -187,6 +194,9 @@ class ZoneAnalyzer:
             row[0] += ctx.dt
             row[1] += ctx.dt if occ else 0.0
             row[2] += ctx.dt * counts[z.name]
+            fr = ctx.zone_fine.setdefault((z.name, ctx.fine_bin()), [0.0, 0.0])
+            fr[0] += ctx.dt
+            fr[1] += ctx.dt if occ else 0.0
 
     def finish(self, ctx: Ctx):
         for key in list(self.in_zone):
@@ -261,6 +271,8 @@ class MachineAnalyzer:
         else:
             row[1] += ctx.dt
             row[5] += ctx.dt if att else 0.0
+        fr = ctx.machine_fine.setdefault((self.name, ctx.fine_bin()), [0.0, 0.0])
+        fr[0 if state == "work" else 1] += ctx.dt
         if colour == "red":
             row[2] += ctx.dt
         elif colour == "yellow":

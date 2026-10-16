@@ -2,34 +2,24 @@
 from __future__ import annotations
 
 import argparse
-import multiprocessing as mp
 import os
-import time
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-import yaml
-
 from . import pipeline
-from .config import DEFAULTS, ConfigError, check_config, normalize_camera
+from .analyze import analyze, ensure_model, run_analysis
+from .config import DEFAULTS, normalize_camera, read_config
+from .paths import models_dir
 from .report import write_reports
 from .sources import discover
-from .storage import clean_stale, merge_shards, shard_path
+from .storage import merge_shards
 from .tools import extract_frames, fetch_models, probe_activity, snapshot, split_coco
 from .video import active_intervals, fmt_ts
 
 
 def parse_hours(s: str):
     return [[int(a), int(b)] for a, b in (r.split("-") for r in s.split(","))]
-
-
-def read_config(path: str) -> dict:
-    cfg = yaml.safe_load(open(path, encoding="utf-8"))
-    try:
-        check_config(cfg)
-    except ConfigError as e:
-        raise SystemExit(f"{path}: {e}")
-    return cfg
 
 
 def load(a):
@@ -115,43 +105,17 @@ def cmd_scan(a):
 
 def cmd_run(a):
     cfg, opts, cams = load(a)
-    out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-    clean_stale(out)
     srcs, issues = sources(a, cams)
     print_issues(issues)
-    tasks, done = [], 0
-    for s in srcs:
-        if not active_intervals(s["start_ts"], s["duration"], opts["active_hours"]):
-            continue
-        sp = shard_path(out, s["camera"], s["rel"])
-        if sp.exists():
-            done += 1
-            continue
-        tasks.append(dict(src=s, cam=cams[s["camera"]], opts=opts, out=str(out), shard=str(sp)))
-    if a.limit_files:
-        tasks = tasks[: a.limit_files]
-    w = min(a.workers or os.cpu_count() or 1, max(1, len(tasks)))
-    print(f"{len(tasks)} file(s) to process ({done} already done, skipped), {w} worker(s), {opts['fps']} fps")
-    if w > 2 and any("workpieces" in t["cam"] for t in tasks):
-        print("! workpiece counting runs RF-DETR on PyTorch (all cores per process, ~1 GB RAM each): for those cameras use "
-              "--camera camN --workers 1 (or 2) and run the other cameras separately")
-    errors, t0 = [], time.time()
-    if tasks:
-        with mp.get_context("spawn").Pool(w, pipeline.init_worker, (a.model, opts["conf"])) as pool:
-            for i, r in enumerate(pool.imap_unordered(pipeline.run_task, tasks), 1):
-                if r["ok"]:
-                    print(f"[{i}/{len(tasks)}] {r['source']}: {r['processed_s']:.0f}s video, {r['det_frames']}/{r['frames']} "
-                          f"frames detected, {r['elapsed_s']:.0f}s", flush=True)
-                else:
-                    errors.append(r)
-                    print(f"[{i}/{len(tasks)}] ERROR {r['source']}: {r['error']}", flush=True)
-    print(f"Processing finished in {(time.time() - t0) / 60:.1f} min, {len(errors)} error(s)")
-    if errors:
-        (out / "errors.log").write_text("\n".join(f"{e['source']}\t{e['error']}" for e in errors), encoding="utf-8")
-        print(f"errors listed in {out / 'errors.log'}; run again to retry only the failed files")
+    run_analysis(cams, opts, srcs, Path(a.out), ensure_model(a.model), a.workers, limit_files=a.limit_files, chunk_s=a.chunk_min * 60.0)
     if not a.no_report:
         cmd_report(a)
+
+
+def cmd_analyze(a):
+    analyze(a.paths, out=a.out, config=a.config, model=a.model, workers=a.workers, open_report=not a.no_open, auto=not a.no_auto,
+            rediscover=a.rediscover, learn_minutes=a.learn_minutes, chunk_min=a.chunk_min, hours=parse_hours(a.hours) if a.hours else None,
+            fps=a.fps, conf=a.conf, clips=not a.no_clips, hw_decode=a.hw_decode, no_gate=a.no_gate, time_regex=a.time_regex)
 
 
 def cmd_report(a):
@@ -181,7 +145,7 @@ def cmd_snap(a):
 def cmd_models(a):
     names = ["yolox_tiny.onnx"] + (["yolox_s.onnx"] if a.yolox_s else []) + (["pose_landmarker_lite.task"] if a.pose else []) \
         + (["pose_landmarker_full.task"] if a.pose_full else [])
-    fetch_models(names, a.dest)
+    fetch_models(names, a.dest or str(models_dir()))
     print("RF-DETR weights are downloaded by the rfdetr package on first use (~/.roboflow/models); copy that folder for offline machines.")
 
 
@@ -271,12 +235,28 @@ def main(argv=None):
 
     p = sub.add_parser("run", help="process all videos (resumable) and build the report")
     common(p), tuning(p)
-    p.add_argument("--model", required=True)
+    p.add_argument("--model", help="person detector .onnx (default: models/yolox_tiny.onnx, downloaded on first use)")
     p.add_argument("--workers", type=int)
+    p.add_argument("--chunk-min", type=float, default=0, help="cut recordings longer than this into chunks for parallel workers (0 = off)")
     p.add_argument("--limit-files", type=int, help="trial run on the first N files")
     p.add_argument("--no-report", action="store_true")
     p.add_argument("--idle-min", type=float, default=5, help="minimum idle period for the report, minutes")
     p.set_defaults(f=cmd_run)
+
+    p = sub.add_parser("analyze", help="ONE STEP: give a video / folder, get the report (learns the scene, analyses, opens the page)")
+    p.add_argument("paths", nargs="+", help="video file(s) and/or folder(s); drag them onto analyze_video.bat")
+    p.add_argument("--out", help="results folder (default: <video>_analysis next to a single file, <folder>/_analysis otherwise)")
+    p.add_argument("--config", help="use this cameras.yaml instead of learning the scene")
+    p.add_argument("--model")
+    p.add_argument("--workers", type=int)
+    p.add_argument("--no-open", action="store_true", help="do not open the report in the browser")
+    p.add_argument("--no-auto", action="store_true", help="skip scene learning: people counting only")
+    p.add_argument("--rediscover", action="store_true", help="learn the scene again even if <out>/cameras.auto.yaml exists")
+    p.add_argument("--learn-minutes", type=float, default=6, help="footage sampled per camera for scene learning")
+    p.add_argument("--chunk-min", type=float, default=20, help="cut recordings longer than this into chunks so all cores are used (0 = off)")
+    p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")
+    tuning(p)
+    p.set_defaults(f=cmd_analyze)
 
     p = sub.add_parser("report", help="rebuild the report from finished files")
     p.add_argument("--out", default="out")
@@ -290,7 +270,7 @@ def main(argv=None):
     p.set_defaults(f=cmd_snap)
 
     p = sub.add_parser("models", help="download the ONNX / pose models into models/")
-    p.add_argument("--dest", default="models")
+    p.add_argument("--dest", help="default: the project's models/ folder (or $VIDAN_MODELS)")
     p.add_argument("--pose", action="store_true", help="MediaPipe pose_landmarker_lite.task (inactivity.method: pose)")
     p.add_argument("--pose-full", action="store_true")
     p.add_argument("--yolox-s", action="store_true", help="larger, more accurate person detector (3.5x slower)")
@@ -333,6 +313,9 @@ def main(argv=None):
     p.add_argument("--seconds", type=float, default=120)
     p.set_defaults(f=cmd_probe)
 
+    for stream in (sys.stdout, sys.stderr):  # a Windows console may not encode Armenian / Russian paths: never crash on printing
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     a = ap.parse_args(argv)
     a.f(a)
 
