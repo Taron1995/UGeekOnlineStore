@@ -16,7 +16,7 @@ from . import pipeline
 from .autoconfig import build_camera_config, learn_scene
 from .config import DEFAULTS, check_config, normalize_camera, read_config
 from .paths import find_model, models_dir
-from .report import write_reports
+from .report import _dur, write_reports
 from .sources import VIDEO_EXT, discover, discover_auto
 from .storage import SCHEMA_VERSION, clean_stale, merge_shards, shard_glob, shard_meta, shard_path
 from .tools import MODEL_URLS, fetch_models, snapshot
@@ -206,15 +206,11 @@ def cameras_summary(srcs, hours=None) -> str:
         p[0] += 1
         p[1] += sum(b - a for a, b in active_intervals(s["start_ts"], s["duration"], hours))
         p[2], p[3] = min(p[2], s["start_ts"]), max(p[3], s["start_ts"] + s["duration"])
-    lines = [f"  {cam}: {n} file(s), {_wall(t)} of video, {fmt_ts(t0, '%Y-%m-%d %H:%M')} -> {fmt_ts(t1, '%Y-%m-%d %H:%M')}"
+    lines = [f"  {cam}: {n} file(s), {_dur(t)} of video, {fmt_ts(t0, '%Y-%m-%d %H:%M')} -> {fmt_ts(t1, '%Y-%m-%d %H:%M')}"
              for cam, (n, t, t0, t1) in sorted(per.items())[:12]]
     if len(per) > 12:
         lines.append(f"  ... and {len(per) - 12} more camera(s)")
     return "\n".join(lines)
-
-
-def _wall(seconds: float) -> str:
-    return f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min" if seconds < 5400 else f"{seconds / 3600:.1f} h"
 
 
 def estimate(srcs, cams, opts, make_detect, workers, bench_s: float = 15.0):
@@ -233,7 +229,7 @@ def estimate(srcs, cams, opts, make_detect, workers, bench_s: float = 15.0):
         return None
     w = workers or os.cpu_count() or 1
     wall = total * meta["elapsed_s"] / meta["processed_s"] / w
-    return (f"Estimate: about {_wall(wall)} for {_wall(total)} of video on {w} worker(s) - an upper bound from a quick test (the motion gate usually makes it "
+    return (f"Estimate: about {_dur(wall)} for {_dur(total)} of video on {w} worker(s) - an upper bound from a quick test (the motion gate usually makes it "
             f"faster; cameras with workpiece counting are slower). To shorten it: --hours 8-20 (working hours only), --fps 2, or do one camera / one day first.")
 
 
