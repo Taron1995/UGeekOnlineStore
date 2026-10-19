@@ -9,7 +9,7 @@ Runs on recordings you already have (days of footage, many cameras), fully offli
 | 1 | **Time at the machine** | person detection + a zone around the station, occupancy per minute (a short hold time bridges detection gaps) | `zones` | verified (synthetic + real video) |
 | 2 | **Absence outside breaks** | the same zone + a work/break `schedule`; only minutes where someone is expected count | `schedule` | verified (synthetic, unit-tested) |
 | 3 | **Gatherings of 2+ workers** | people closer than `dist_k` x body height, outside the work zones, longer than `min_duration_s`; frame + clip as evidence | `gathering` | verified on real footage; thresholds not calibrated |
-| 4 | **Machine work / idle** | signal-lamp colour (green/yellow/red, HSV) **or** motion in a small zone of the working part, people masked out | `machines` | lamp + motion verified on synthetic video, **not on real machines** |
+| 4 | **Machine work / idle** | **no lamp needed:** a person has stayed at the machine's *processing section* (drawn by hand) while something there moves; **or** motion of the machine's own moving part, people masked out; **or**, only for machines that have one, the colour of a signal lamp (green/yellow/red, HSV) | `machines` | all three verified on synthetic video (the processing section also run on real pedestrian footage), **not on real machines** |
 | 5 | **Workpiece count** | RF-DETR trained on your part + tracker + `supervision.LineZone` at the machine exit; **alternative**: machine cycles (motion -> stop = one machining) | `workpieces`, `machines[].cycle` | counting verified with COCO weights on real video and a toy training; **your parts need your annotated data** |
 | 6 | **Seated without movement** | per-person body activity over time: frame difference (default) or MediaPipe Pose (landmarks + posture) | `inactivity` | motion verified on real video; pose measured, see the warning below |
 | 7 | People counting | tracker + counting lines (in / out), unique appearances | `lines` | verified (real video, stable across 2-10 fps) |
@@ -52,8 +52,11 @@ No camera config is needed. The program does this by itself:
    `$VIDAN_MODELS`). On a computer without internet, put that file there once; the error message gives the address.
 3. **Scene learning**, about 6 minutes of footage per camera, sampled across all of its recordings (`--learn-minutes`; `--hours 8-20` keeps it to working hours):
    * a **station** (work zone) = a place where a person stays put for at least 15 s, 30 s or more in total;
-   * a **machine** = a spot that keeps moving while the people are masked out (clock overlays and picture borders are ignored), or a small light that
-     switches colour or blinks - a **signal lamp** (green = working, everything else = not working);
+   * a **machine** = a spot that keeps moving while the people are masked out (clock overlays and picture borders are ignored). **Signal lamps are not looked
+     for** unless you say that your machines have them (`--lamps`, or the checkbox in the window): then a small light that switches colour or blinks becomes a
+     **signal lamp** (green = working, everything else = not working);
+   * a machine that **has no lamp and is worked on by people** (a bench, a press fed by hand, a lathe with an operator) cannot be found by itself: draw its
+     **processing section** in the zone editor (next section). The machine counts as working while a person has stayed at that section for at least 8 s and something in it moves;
    * a camera where nothing is found just gets people counting.
 4. **Analysis** with all CPU cores. Recordings longer than 30 minutes are cut into chunks of about 20 minutes, so one big file also keeps every core busy (`--chunk-min`).
    Before the long part it lists the cameras it found (check the names!) and, for more than 2 hours of video, prints an upper-bound time estimate with the ways to shorten it.
@@ -82,19 +85,20 @@ double-click or Enter (right-click / Backspace removes the last corner, Esc canc
 | Ignored area (red) | nobody standing here is analysed (a TV, a poster with people, a mirror) | `areas`, `mode: ignore` |
 | Station (green) | a person works here: time at the station, absences | `zones`, `kind: workstation` |
 | Rest or common zone | a rest corner: time spent there, never an "absence" | `zones`, `kind: rest` |
-| Machine: the moving part (orange) | work / idle from motion in this spot (people masked out) | `machines`, `source: motion` |
-| Machine: signal lamp (magenta) | work / idle from the lamp colour (draw it tight around the lamp) | `machines`, `source: lamp` |
+| Machine: processing section (dark orange) | the part of the machine where people work on it - **no lamp needed.** Working = a person has stayed here for at least 8 s **and** something in the section moves; a person who only walks by, or stands still, is not work. Draw it tight around the working area | `machines`, `source: activity` |
+| Machine: moving part (orange) | work / idle from motion in this spot while nobody is in front of it (people masked out): a machine that runs by itself | `machines`, `source: motion` |
+| Machine: signal lamp (magenta) | work / idle from the lamp colour (draw it tight around the lamp) - only for machines that have one | `machines`, `source: lamp` |
 
-A machine belongs to the nearest station (so the report can show work without an operator); change it in "Machine belongs to". The shapes are saved into
+A moving part or a lamp belongs to the nearest station (so the report can show work without an operator); change it in "Machine belongs to". A processing section has no such link: it only counts work while people are there. The shapes are saved into
 `<results>/cameras.auto.yaml` - the setup `analyze` uses - and a picture of the camera with the shapes drawn in goes to `setup/`; the file that was there is kept as `.bak`.
 Start with an analysis run, then correct what the program learned: the window opens with those shapes, which can be deleted and redrawn. Without an earlier run the
 window starts empty and creates the setup for all cameras (cameras you do not draw on get people counting only, as in the learned setup of a camera where nothing was found).
 After saving, run the analysis again: **only the cameras whose zones changed are computed again.** The foot point of a person decides whether they are inside an area or a zone.
 
-Other options: `--config cameras.yaml` (your own file, see below), `--no-auto` (people counting only), `--workers N`, `--fps`, `--hours`, `--time-regex`
-(unusual file names), `--no-open`; `python -m videoanalytics analyze --help`.
+Other options: `--config cameras.yaml` (your own file, see below), `--no-auto` (people counting only), `--lamps` (your machines have signal lamps: look for them while learning),
+`--workers N`, `--fps`, `--hours`, `--time-regex` (unusual file names), `--no-open`; `python -m videoanalytics analyze --help`.
 
-What no automatic step can know: your **work schedule** (absences), the real machine state (lamp and motion are proxies), and the **number of parts**
+What no automatic step can know: your **work schedule** (absences), the real machine state (people at the section, motion and lamp are proxies), and the **number of parts**
 (the part detector has to be trained on your annotated frames, see *Workpiece counting*).
 
 ### Recordings straight from a camera, and when something looks wrong
@@ -163,7 +167,10 @@ validated on start** (unknown keys, polygons given in pixels, a machine linked t
 * `machines` (several per camera): `source: lamp` - `roi` is a tight polygon around the lamp stack, `work_colors` (default `[green]`), tune
   `sat_min` / `val_min` / `min_frac` with `snap`, which prints the colour the reader sees and its per-colour scores on the snapshot; red time is
   reported as alarm, yellow as wait. `source: motion` - `roi` covers the moving part (spindle, table), `motion_thr`, `window_s`, `on_frac`.
-  `zone:` links the operator zone: the report then shows work **without an operator**. `cycle:` counts cycles (motion machines use their own
+  `source: activity` (a machine without a lamp that people work on) - `roi` is the processing section: the machine works while a person has stayed in it for `min_present_s`
+  (8 s; at least `min_overlap` = 0.15 of their box or of the section lies in it) **and** more than `motion_thr` of the section's picture changes (`window_s`, `on_frac` as for motion).
+  People are not masked out here (their work is the movement), so draw the section small: someone slowly strolling through a large one counts too.
+  `zone:` (moving parts and lamps) links the operator zone: the report then shows work **without an operator**. `cycle:` counts cycles (motion machines use their own
   short window, set a camera-level `fps: 5` so a few-second cycle is resolved).
 * `gathering`: `min_people` (2), `dist_k` (1.0 x mean body height), `min_duration_s` (180), `gap_s` (10, detection gaps bridged).
 * `inactivity`: `method: motion | pose`, `zones` (watch only people in these zones), `min_duration_s`, `motion_thr`, `require_seated` (pose only).
@@ -194,6 +201,8 @@ equals the part count if one cycle makes one part.
 
 * **Lamp**: `snap` shows the detected colour and scores on the frame. Overexposed lamps look white on camera; lower `sat_min`, tighten the ROI.
 * **Machine motion**: `motion_thr` / `window_s` per machine on an hour whose true state you know.
+* **Processing section**: on an hour whose true state you know compare the machine's "Work" with reality, then tune `min_present_s` (so that a passer-by does not count),
+  `motion_thr` (how much must move) and the size of the section.
 * **Inactivity**: `python -m videoanalytics probe --config cameras.yaml --videos D:/footage --camera cam2 --model models/yolox_tiny.onnx --start 600 --seconds 120`
   prints the measured activity per person. Run it where someone sits still and where they work, then set `motion_thr` between the two.
   On real pedestrians the frame-difference activity was 0.4-0.7 while walking; on a still person with video-compression noise added it was exactly 0.
@@ -247,6 +256,10 @@ Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`
 * Zone editor (logic tests with mutation checks; the window driven with synthetic mouse and keyboard events on a virtual display): shapes <-> config keep every other setting, machines
   find their station again when theirs is deleted, a setup the analysis would refuse is not written. On the real pedestrian clip, a tracking area over the left half changed the
   average number of people in view from 5.78 to 2.03 and only that camera was computed again.
+* Machine work from people at a processing section (`activity`; unit tests with mutation checks): a person who stays and works makes the machine work; a passer-by, a person
+  standing still, a machine that runs with nobody there and a person far from the section do not; a missed detection does not restart the clock; what is drawn in the editor is what
+  `analyze` uses. On the real pedestrian clip (`vtest.avi`) a section in the middle of the picture was "working" for 15 of 69 s - one person stayed in it for about 16 s - and an
+  empty patch of grass for 0 s; the same footage frozen with 7 people standing in view gave 0 s (nothing moves). That checks the plumbing with real detections, not the accuracy on a machine.
 * Camera codecs and containers, made with ffmpeg from the real pedestrian clip and run through `doctor` and `analyze` without errors: H.264 in MP4 (also 25 fps with a
   250-frame key interval, and 1080p), in MKV, in MPEG-TS and fragmented MP4; H.265 / HEVC; a raw `.h264` stream (no length, no frame rate: flagged, read once).
   OpenCV's FFmpeg messages about not-yet-decodable frames are switched off.
@@ -257,8 +270,8 @@ Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`
   took 38 s end to end, including the first-run model download. An edited setup is recomputed, an unchanged one reused; chunked and unchunked totals are equal;
   the window was run for real under a virtual display (start, progress, report); Stop and the failure cases are tested with a stand-in command.
 
-**Not verified:** anything on your cameras (night/IR, occlusion, crowds, lamp overexposure); machine WORK/IDLE against real machines (it is a motion /
-lamp proxy, not a machine signal); the pose backend on large people; real workpiece accuracy; `--hw-decode`; Windows (nothing here ran on Windows,
+**Not verified:** anything on your cameras (night/IR, occlusion, crowds, lamp overexposure); machine WORK/IDLE against real machines (people at the processing
+section, motion and lamp are proxies, not a machine signal; whether "a person stays 8 s and something moves" is the right rule for your machines is unknown until you compare it with an hour you checked by hand); the pose backend on large people; real workpiece accuracy; `--hw-decode`; Windows (nothing here ran on Windows,
 including `analyze_video.bat`, the window and the zone editor under Windows; the editor was not tried on a high-resolution or macOS screen). **The automatic setup has not been tried on footage from a real workshop** - how many
 false stations / machines it finds and how many real ones it misses there is unknown until you look at the "Learned setup" block of your first run.
 Measure on a hand-counted sample hour before quoting numbers.
@@ -284,7 +297,7 @@ fine-tuned on your own footage (workpieces) avoids that for the part detector.
 
 ## Tests
 
-`pytest tests` (tracker, zones/lines, detector post-processing, path/time parsing, active hours, config validation, lamp, machine/cycles, occupancy,
+`pytest tests` (tracker, zones/lines, detector post-processing, path/time parsing, active hours, config validation, lamp, machine/cycles, work by people at a processing section, occupancy,
 gatherings, inactivity, schedule/absence, report and timelines, tools, workpieces, scene learning, the one-step run, camera-style inputs, doctor / diagnostics, the window). Tests that need
 MediaPipe / supervision skip when the package is missing; the window tests need a display (Linux without one: `xvfb-run python -m pytest tests/test_gui.py`)
 and skip without it.

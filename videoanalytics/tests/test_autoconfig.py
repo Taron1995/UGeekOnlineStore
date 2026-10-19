@@ -31,7 +31,7 @@ def stations_detect():
 def test_stations_are_where_people_stand_still_not_where_they_walk(tmp_path):
     v = tmp_path / "s.mp4"
     make_video(v, 80, lambda f, t: None)
-    cfg, info, _ = learn_scene([src(v, 80)], stations_detect(), minutes=2, fps=2)
+    cfg, info, _ = learn_scene([src(v, 80)], stations_detect(), minutes=2, fps=2, lamps=True)
     zones = cfg["zones"]
     assert len(zones) == 2 and info["frames"] > 100
     assert any(inside(z["polygon"], 55, 170) for z in zones) and any(inside(z["polygon"], 245, 170) for z in zones)
@@ -44,10 +44,10 @@ def test_a_short_stop_does_not_make_a_station(tmp_path):
     v = tmp_path / "s.mp4"
     make_video(v, 60, lambda f, t: None)
     n = itertools.count()
-    cfg, _, _ = learn_scene([src(v, 60)], lambda f: [(*STILL_A, 0.9)] if next(n) < 80 else [], minutes=2, fps=2, dwell_s=15)
+    cfg, _, _ = learn_scene([src(v, 60)], lambda f: [(*STILL_A, 0.9)] if next(n) < 80 else [], minutes=2, fps=2, lamps=True, dwell_s=15)
     assert cfg["zones"] == []
     n = itertools.count()
-    cfg, _, _ = learn_scene([src(v, 60)], lambda f: [(*STILL_A, 0.9)] if next(n) < 110 else [], minutes=2, fps=2, dwell_s=15)
+    cfg, _, _ = learn_scene([src(v, 60)], lambda f: [(*STILL_A, 0.9)] if next(n) < 110 else [], minutes=2, fps=2, lamps=True, dwell_s=15)
     assert len(cfg["zones"]) == 1  # 55 s standing -> 40 s counted -> a station
 
 
@@ -72,7 +72,7 @@ def blue_person(frame):
 def test_machine_found_people_and_clock_ignored(tmp_path):
     v = tmp_path / "m.mp4"
     make_video(v, 40, draw_scene)
-    cfg, info, _ = learn_scene([src(v, 40)], blue_person, minutes=2, fps=2)
+    cfg, info, _ = learn_scene([src(v, 40)], blue_person, minutes=2, fps=2, lamps=True)
     (m,) = cfg["machines"]
     xs = [p[0] * W for p in m["roi"]]
     ys = [p[1] * H for p in m["roi"]]
@@ -97,12 +97,21 @@ def draw_lamps(f, t):
 def test_stack_light_found_always_on_led_and_rec_dot_ignored(tmp_path):
     v = tmp_path / "l.mp4"
     make_video(v, 40, draw_lamps)
-    cfg, info, _ = learn_scene([src(v, 40)], lambda f: [], minutes=2, fps=2)
+    cfg, info, _ = learn_scene([src(v, 40)], lambda f: [], minutes=2, fps=2, lamps=True)
     lamps = [m for m in cfg["machines"] if m["source"] == "lamp"]
     assert len(lamps) == 1
     xs, ys = [p[0] * W for p in lamps[0]["roi"]], [p[1] * H for p in lamps[0]["roi"]]
     assert min(xs) <= 150 and max(xs) >= 160 and min(ys) <= 22 and max(ys) >= 55
     assert set(info["lamps"][0]["colours"]) == {"red", "yellow", "green"} and lamps[0]["work_colors"] == ["green"]
+
+
+def test_lamps_are_not_looked_for_unless_asked(tmp_path):
+    v = tmp_path / "l.mp4"
+    make_video(v, 40, draw_lamps)  # a real stack light is in the picture, but nobody said the machines have lamps
+    cfg, info, _ = learn_scene([src(v, 40)], lambda f: [], minutes=2, fps=2)
+    assert info["lamps"] == [] and info["lamps_looked_for"] is False and [m for m in cfg["machines"] if m["source"] == "lamp"] == []
+    _, asked, _ = learn_scene([src(v, 40)], lambda f: [], minutes=2, fps=2, lamps=True)
+    assert len(asked["lamps"]) == 1 and asked["lamps_looked_for"] is True
 
 
 # ---------- config + helpers ----------
@@ -134,7 +143,7 @@ def test_static_coloured_object_hidden_by_a_passing_person_is_not_a_lamp(tmp_pat
     make_video(v, 40, lambda f, t: f.__setitem__((slice(120, 140), slice(100, 112)), (0, 200, 255)))
     n = itertools.count()
     cover = lambda f: [(90.0, 100.0, 125.0, 170.0, 0.9)] if 20 <= next(n) < 60 else []  # a person stands in front for half the time
-    cfg, info, _ = learn_scene([src(v, 40)], cover, minutes=2, fps=2)
+    cfg, info, _ = learn_scene([src(v, 40)], cover, minutes=2, fps=2, lamps=True)
     assert [m for m in cfg["machines"] if m["source"] == "lamp"] == [] and info["lamps"] == []
 
 
@@ -143,7 +152,7 @@ def test_machine_mostly_hidden_by_its_operator_is_still_found(tmp_path):
     make_video(v, 80, lambda f, t: f.__setitem__((slice(50, 90), slice(200 + int(t * 40) % 40, 215 + int(t * 40) % 40)), 255))
     n = itertools.count()
     operator = lambda f: [(190.0, 40.0, 275.0, 110.0, 0.9)] if next(n) % 10 else []  # in front of the machine 90 % of the frames
-    cfg, info, _ = learn_scene([src(v, 80)], operator, minutes=2, fps=2)
+    cfg, info, _ = learn_scene([src(v, 80)], operator, minutes=2, fps=2, lamps=True)
     (m,) = [m for m in cfg["machines"] if m["source"] == "motion"]
     assert info["motion"][0]["freq"] > 0.6  # frequency over the frames in which the machine was visible (unnormalised it would be ~0.08)
     xs = [p[0] * W for p in m["roi"]]

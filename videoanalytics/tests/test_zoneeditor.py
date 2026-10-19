@@ -1,6 +1,7 @@
 """Marking zones by hand: the shapes <-> config logic and saving (no window), then the window itself (needs a display)."""
 import sqlite3
 
+import cv2
 import pytest
 import yaml
 
@@ -8,7 +9,7 @@ from tests.test_features import make_video
 from videoanalytics import zoneeditor as ze
 from videoanalytics.analyze import analyze
 from videoanalytics.config import ConfigError, check_config, read_config
-from videoanalytics.zoneeditor import Shape, apply_shapes, new_shape, next_name, open_session, problems, shapes_of
+from videoanalytics.zoneeditor import Shape, apply_shapes, kind_word, new_shape, next_name, open_session, problems, shapes_of
 
 SQ = lambda x, y, s=0.2: [[round(a, 4), round(b, 4)] for a, b in [[x, y], [x + s, y], [x + s, y + s], [x, y + s]]]  # as the editor stores them: 4 decimals
 LEFT_BOX, RIGHT_BOX = (40, 60, 70, 140), (240, 60, 270, 140)  # feet at x = 55 and 255 of 320
@@ -26,18 +27,20 @@ CAM = dict(match="cam1", schedule=dict(work=[["08:00", "17:00"]]), gathering=dic
            zones=[dict(name="press", kind="workstation", polygon=SQ(0.1, 0.5), hold_s=9.0, schedule=dict(work=[["09:00", "12:00"]])),
                   dict(name="lounge", kind="rest", polygon=SQ(0.6, 0.6))],
            machines=[dict(name="m1", source="motion", roi=SQ(0.1, 0.2), zone="press", motion_thr=0.05, window_s=20, cycle=dict(min_work_s=2.0)),
-                     dict(name="l1", source="lamp", roi=SQ(0.8, 0.1, 0.05), work_colors=["green", "yellow"])],
+                     dict(name="l1", source="lamp", roi=SQ(0.8, 0.1, 0.05), work_colors=["green", "yellow"]),
+                     dict(name="w1", source="activity", roi=SQ(0.3, 0.5), min_present_s=6, min_overlap=0.3, motion_thr=0.03)],
            areas=[dict(name="floor", polygon=SQ(0, 0, 1), mode="watch")])
 
 
 def test_shapes_round_trip_keeps_every_setting():
     shapes = shapes_of(CAM)
-    assert [(s.kind, s.name) for s in shapes] == [("watch", "floor"), ("station", "press"), ("rest", "lounge"), ("motion", "m1"), ("lamp", "l1")]
+    assert [(s.kind, s.name) for s in shapes] == [("watch", "floor"), ("station", "press"), ("rest", "lounge"), ("motion", "m1"), ("lamp", "l1"), ("activity", "w1")]
     back = apply_shapes(CAM, shapes)
     assert back["zones"][0] == dict(CAM["zones"][0], polygon=CAM["zones"][0]["polygon"]) and back["match"] == "cam1"  # hold_s and the zone's own schedule survive
     assert back["machines"][0]["cycle"] == {"min_work_s": 2.0} and back["machines"][0]["motion_thr"] == 0.05 and back["machines"][1]["work_colors"] == ["green", "yellow"]
     assert back["schedule"] == CAM["schedule"] and back["gathering"] == CAM["gathering"]  # other keys untouched
     assert back["machines"][1].get("zone") is None  # l1 was not linked and stays so (a loaded machine keeps its link choice)
+    assert back["machines"][2] == dict(CAM["machines"][2])  # the processing section: source and every setting as it was, and no station link although 'press' is next to it
     check_config(dict(cameras=dict(cam1=back)))
 
 
@@ -46,10 +49,12 @@ def test_a_moved_shape_keeps_its_settings_a_new_one_gets_defaults():
     shapes[1].points = SQ(0.3, 0.3)
     shapes.append(new_shape("motion", "motion1", SQ(0.4, 0.1)))
     shapes.append(new_shape("lamp", "lamp1", SQ(0.9, 0.9, 0.05)))
+    shapes.append(new_shape("activity", "work1", SQ(0.5, 0.5)))
     back = apply_shapes(CAM, shapes)
     assert back["zones"][0]["polygon"] == SQ(0.3, 0.3) and back["zones"][0]["hold_s"] == 9.0
-    motion, lamp = back["machines"][2], back["machines"][3]
+    motion, lamp, work = back["machines"][3], back["machines"][4], back["machines"][5]
     assert motion["motion_thr"] == 0.02 and motion["window_s"] == 10 and lamp["work_colors"] == ["green"]  # what the scene learning gives new machines too
+    assert work == dict(name="work1", source="activity", roi=SQ(0.5, 0.5), motion_thr=0.02, window_s=10, min_present_s=8)  # no station link: the people are there by definition
 
 
 def test_coordinates_are_clamped_and_rounded():
@@ -77,9 +82,18 @@ def test_a_machine_of_a_deleted_station_looks_for_the_nearest_again_and_the_setu
     assert again["machines"][0]["zone"] == "bench"  # another station is near: the machine belongs to it now
 
 
+def test_a_processing_section_belongs_to_no_station_even_next_to_one():
+    station = new_shape("station", "spot1", SQ(0.1, 0.5))
+    section = new_shape("activity", "work1", SQ(0.1, 0.3))  # right next to the station, where a moving part or a lamp would link
+    assert section.zone == "" and "zone" not in apply_shapes({}, [station, section])["machines"][0]
+    section.zone = "spot1"  # a stale choice (the shape was a moving part before): it is not written
+    assert "zone" not in apply_shapes({}, [station, section])["machines"][0]
+
+
 def test_names_follow_the_kind_and_skip_taken_ones():
     taken = [new_shape("station", "spot1", SQ(0, 0)), new_shape("station", "spot3", SQ(0.3, 0))]
     assert next_name("station", taken) == "spot2" and next_name("watch", taken) == "area1" and next_name("lamp", taken) == "lamp1"
+    assert next_name("activity", taken) == "work1" and next_name("activity", taken + [new_shape("activity", "work1", SQ(0.6, 0.6))]) == "work2"
     assert next_name("station", taken + [new_shape("station", "spot2", SQ(0.6, 0))]) == "spot4"
 
 
@@ -89,8 +103,11 @@ def test_problems_are_said_in_plain_words():
     bad = [new_shape("station", "a", SQ(0.1, 0.1)), new_shape("rest", "a", SQ(0.5, 0.5)), new_shape("station", " ", SQ(0.7, 0.7)),
            Shape("station", "b", [[0, 0], [1, 1]]), new_shape("lamp", "tiny", SQ(0.5, 0.5, 0.01))]
     text = " ".join(problems(bad))
-    for fragment in ("'a' is used twice among the zones", "has no name", "'b' needs at least 3 corners", "'tiny' is too small"):
+    for fragment in ("'a' is used twice among the zones", "a station has no name", "'b' needs at least 3 corners", "'tiny' is too small"):
         assert fragment in text
+    machines = [new_shape("activity", "m", SQ(0.1, 0.1)), new_shape("motion", "m", SQ(0.5, 0.5)), new_shape("activity", "", SQ(0.7, 0.7))]
+    text = " ".join(problems(machines))  # processing sections, moving parts and lamps are all machines: one name, one machine
+    assert "the name 'm' is used twice among the machines" in text and "a processing section has no name" in text
 
 
 # ---- inputs and saving -------------------------------------------------------------------------------------------------------
@@ -132,7 +149,7 @@ def test_an_existing_setup_is_loaded_and_its_other_keys_survive(tmp_path):
     (out / "cameras.auto.yaml").write_text(yaml.safe_dump(dict(options=dict(fps=5), schedule=dict(work=[["08:00", "17:00"]]),
                                                                cameras=dict(cam1=dict(CAM, match="cam1"), cam2=dict(match="cam2")))))
     session = open_session([str(tmp_path)])
-    assert not session.created and [s.name for s in session.shapes("cam1")] == ["floor", "press", "lounge", "m1", "l1"]
+    assert not session.created and [s.name for s in session.shapes("cam1")] == ["floor", "press", "lounge", "m1", "l1", "w1"]
     path = session.save({"cam2": [new_shape("station", "spot1", SQ(0.2, 0.2))]})
     cfg = read_config(path)
     assert cfg["options"] == {"fps": 5} and cfg["schedule"] == dict(work=[["08:00", "17:00"]]) and cfg["cameras"]["cam1"]["zones"][0]["hold_s"] == 9.0
@@ -182,8 +199,26 @@ def test_what_was_drawn_is_what_the_analysis_uses(tmp_path):
     assert "tracking area <b>floor</b>" in report and "drawn by hand" in report and 'src="setup/cam1.jpg"' in report
 
 
-def test_the_window_offers_six_kinds_of_shape():
-    assert list(ze.KINDS) == ["watch", "ignore", "station", "rest", "motion", "lamp"] and all(len(v) == 3 for v in ze.KINDS.values())
+def test_a_processing_section_drawn_by_hand_makes_the_machine_work_while_people_work_there(tmp_path):
+    """Editor -> analyze with no lamp anywhere: the machine works while a person stays at the section and something moves in it."""
+    v = tmp_path / "cam1_20261001_080000.mp4"
+    block = lambda f, t: cv2.rectangle(f, (190 + int(t * 50) % 60, 20), (220 + int(t * 50) % 60, 70), (255, 255, 255), -1)  # something moves in the section all the time
+    make_video(v, 40, block)
+    session = open_session([str(v)])
+    section = [[0.55, 0.0], [1.0, 0.0], [1.0, 0.7], [0.55, 0.7]]
+    session.save({"cam1": [new_shape("activity", "work1", section)]}, {"cam1": (str(v), 5.0)})
+    analyze([str(v)], detect=lambda frame: [(240, 40, 270, 140, 0.9)], open_report=False, workers=1)  # one person stands at the section for the whole clip
+    con = sqlite3.connect(session.out / "analytics.db")
+    work, idle = con.execute("SELECT SUM(work_s), SUM(idle_s) FROM machine_minutes WHERE machine = 'work1'").fetchone()
+    assert 27 <= work <= 30 and idle < 3  # all of the 30 s after the 10 s warm-up of the recording, less the moments until the person has "stayed" long enough
+    report = (session.out / "report.html").read_text(encoding="utf-8")
+    assert "processing section (work by people) <b>work1</b> <span class=tag>(drawn by hand)</span>" in report and '<span class="tag">activity</span>' in report
+    assert "1 processing section(s), 0 moving machine zone(s), 0 signal lamp(s)" in (session.out / "diagnostics.txt").read_text(encoding="utf-8")
+
+
+def test_the_window_offers_seven_kinds_of_shape():
+    assert list(ze.KINDS) == ["watch", "ignore", "station", "rest", "activity", "motion", "lamp"] and all(len(v) == 3 for v in ze.KINDS.values())
+    assert [kind_word(k) for k in ze.KINDS] == ["tracking area", "ignored area", "station", "rest or common zone", "processing section", "moving part", "signal lamp"]
 
 
 def test_the_zones_command_passes_everything_on(tmp_path, monkeypatch):

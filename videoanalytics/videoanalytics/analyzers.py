@@ -219,7 +219,8 @@ class LineAnalyzer:
 
 
 class MachineAnalyzer:
-    """WORK/IDLE of one machine from a signal lamp (colour) or from motion in a small ROI; optional cycle counting.
+    """WORK/IDLE of one machine from a signal lamp (colour), from motion in a small ROI (the machine moves; people are masked out) or from
+    `activity` (work done by people: someone has been at the section for min_present_s and something in it moves); optional cycle counting.
     If `zone` links an operator zone, work/idle time is also split into attended / unattended."""
 
     def __init__(self, cfg: dict):
@@ -234,6 +235,10 @@ class MachineAnalyzer:
         else:
             self.ms = MachineState(thr, cfg.get("window_s", 10.0), cfg.get("on_frac", 0.3), cfg.get("off_frac", 0.1))
             self.warm_s = self.ms.window_s
+        if self.source == "activity":
+            self.min_present_s, self.min_overlap = float(cfg.get("min_present_s", 8.0)), float(cfg.get("min_overlap", 0.15))
+            self.since: dict = {}  # track id -> the moment the person arrived at the section
+            self.grid_mask = None
         cyc = cfg.get("cycle")
         self.cycles = CycleCounter(cyc.get("min_work_s", 3.0), cyc.get("min_idle_s", 1.0)) if cyc is not None else None
         # a motion machine needs a short window to resolve cycles; the 10 s window used for WORK/IDLE would blur them
@@ -246,11 +251,33 @@ class MachineAnalyzer:
             ctx.emit("cycle", self.name, f"{e - s:.1f}s", ts=ctx.src["start_ts"] + e)
             ctx.machine_row(self.name, ctx.src["start_ts"] + e)[6] += 1
 
+    def _someone_works_here(self, ctx: Ctx) -> bool:
+        """True while a person has been at the section for min_present_s without leaving (a passer-by does not count). 'At the section' = their box
+        covers min_overlap of itself or of the section; a person the tracker lost for a moment keeps the time he has been there."""
+        sw, sh = ctx.motion.size
+        if self.grid_mask is None:
+            self.grid_mask = self.roi.mask(sw, sh) > 0
+        roi_cells = max(1, int(self.grid_mask.sum()))
+        for t in ctx.tracks:
+            x1, y1, x2, y2 = (max(0, int(t.box[0] / ctx.w * sw)), max(0, int(t.box[1] / ctx.h * sh)),
+                              min(sw, int(t.box[2] / ctx.w * sw) + 1), min(sh, int(t.box[3] / ctx.h * sh) + 1))
+            inside = int(self.grid_mask[y1:y2, x1:x2].sum()) if x2 > x1 and y2 > y1 else 0
+            if inside / max(1, (x2 - x1) * (y2 - y1)) >= self.min_overlap or inside / roi_cells >= self.min_overlap:
+                self.since.setdefault(t.id, ctx.t)
+            else:
+                self.since.pop(t.id, None)
+        for tid in [k for k in self.since if k not in ctx.alive]:
+            del self.since[tid]
+        return any(ctx.t - s >= self.min_present_s for s in self.since.values())
+
     def update(self, ctx: Ctx):
         colour, cworking = None, None
         if self.source == "lamp":
             colour, _ = self.lamp.update(ctx.frame, ctx.t)
             state = "work" if colour in self.work_colors else "idle"
+        elif self.source == "activity":
+            ratio = ctx.motion.roi_ratio(self.roi, (), (ctx.h, ctx.w)) if self._someone_works_here(ctx) else 0.0  # people count here: nobody is masked out
+            state, _ = self.ms.update(ratio, ctx.t)
         else:
             ratio = ctx.motion.roi_ratio(self.roi, [t.box for t in ctx.tracks], (ctx.h, ctx.w))
             state, _ = self.ms.update(ratio, ctx.t)

@@ -39,7 +39,7 @@ def python_exe() -> str:
     return str(exe)
 
 
-def build_command(paths, *, out=None, workers=None, relearn=False, python=None, doctor=False, one_camera=False, start=None) -> list[str]:
+def build_command(paths, *, out=None, workers=None, relearn=False, python=None, doctor=False, one_camera=False, start=None, lamps=False) -> list[str]:
     """doctor=True: the quick check of the recordings instead of the analysis."""
     cmd = [python or python_exe(), "-m", "videoanalytics", "doctor" if doctor else "analyze", *[os.path.abspath(p) for p in paths]]
     if not doctor:
@@ -50,6 +50,8 @@ def build_command(paths, *, out=None, workers=None, relearn=False, python=None, 
         cmd += ["--workers", str(int(workers))]
     if relearn and not doctor:
         cmd.append("--rediscover")
+    if lamps and not doctor:
+        cmd.append("--lamps")
     if one_camera:
         cmd.append("--one-camera")
     if start:
@@ -130,12 +132,17 @@ class App:
         self.mode = "analyze"
         self.stopping = False
         root.title("Video analytics")
-        root.minsize(760, 640)
+        root.minsize(760, min(640, root.winfo_screenheight() - 120))
         self.out_var, self.workers_var, self.start_var = tk.StringVar(), tk.StringVar(value="0"), tk.StringVar()
         self.relearn_var, self.open_var, self.one_var = tk.BooleanVar(value=False), tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+        self.lamps_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose the recordings, then press Start.")
         self._layout()
         self.add_paths(paths)
+        root.update_idletasks()
+        room = root.winfo_screenheight() - 120  # title bar and taskbar: on a small screen the log gets shorter, the buttons below it stay visible
+        if root.winfo_reqheight() > room:
+            root.geometry(f"{max(760, root.winfo_reqwidth())}x{room}")
 
     # ---- layout ----------------------------------------------------------------------------------------------------
     def _layout(self):
@@ -144,33 +151,34 @@ class App:
         f.columnconfigure(0, weight=1)
         ttk.Label(f, text="Video analytics", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Label(f, wraplength=720, justify="left", text="Choose the recordings and press Start. The program finds out by itself where the people "
-                  "work and which machines there are, analyses everything and shows the report.").grid(row=1, column=0, sticky="w", pady=(2, 10))
+                  "work and which machines there are, analyses everything and shows the report. A machine that people work on and that has no lamp is marked by hand: "
+                  "\"Mark zones by hand…\", draw its processing section.").grid(row=1, column=0, sticky="w", pady=(2, 10))
 
         box = ttk.LabelFrame(f, text="1. What to analyse (video files and / or folders)", padding=8)
         box.grid(row=2, column=0, sticky="ew")
-        box.columnconfigure(0, weight=1)
-        self.listbox = tk.Listbox(box, height=4, selectmode="extended", activestyle="none")
-        self.listbox.grid(row=0, column=0, rowspan=4, sticky="ew")
+        box.columnconfigure(3, weight=1)
+        self.listbox = tk.Listbox(box, height=3, selectmode="extended", activestyle="none")
+        self.listbox.grid(row=0, column=0, columnspan=4, sticky="ew")
         for i, (text, cmd) in enumerate((("Add video files…", self.pick_files), ("Add a folder…", self.pick_folder),
                                          ("Remove selected", self.remove_selected), ("Clear", self.clear))):
-            ttk.Button(box, text=text, command=cmd).grid(row=i, column=1, sticky="ew", padx=(8, 0), pady=1)
+            ttk.Button(box, text=text, command=cmd).grid(row=1, column=i, sticky="w", padx=(0 if i == 0 else 6, 0), pady=(6, 0))
 
         opt = ttk.LabelFrame(f, text="2. Options (all optional)", padding=8)
         opt.grid(row=3, column=0, sticky="ew", pady=8)
         opt.columnconfigure(1, weight=1)
-        ttk.Label(opt, text="Results folder:").grid(row=0, column=0, sticky="w")
+        ttk.Label(opt, text="Results folder (empty: next to the video):").grid(row=0, column=0, sticky="w")
         ttk.Entry(opt, textvariable=self.out_var).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(opt, text="Browse…", command=self.pick_out).grid(row=0, column=2)
-        ttk.Label(opt, text="(empty: next to the video)", foreground="gray").grid(row=1, column=1, sticky="w", padx=6)
-        ttk.Checkbutton(opt, text="Learn the setup again (ignore the setup of an earlier run)", variable=self.relearn_var).grid(row=2, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(opt, text="Learn the setup again (ignore the setup of an earlier run; the old one is kept)", variable=self.relearn_var).grid(row=1, column=0, columnspan=3, sticky="w")
         ttk.Checkbutton(opt, text="All these files are parts of ONE camera (their names do not tell the cameras apart)", variable=self.one_var).grid(
-            row=3, column=0, columnspan=3, sticky="w")
-        ttk.Label(opt, text="Recorded at (files with no date in their name):").grid(row=4, column=0, sticky="w", pady=(4, 0))
-        ttk.Entry(opt, textvariable=self.start_var, width=20).grid(row=4, column=1, sticky="w", padx=6, pady=(4, 0))
-        ttk.Label(opt, text="e.g. 2026-10-01 08:30", foreground="gray").grid(row=4, column=2, sticky="e", pady=(4, 0))
-        ttk.Label(opt, text="Parallel processes (0 = automatic):").grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Spinbox(opt, from_=0, to=64, width=5, textvariable=self.workers_var).grid(row=5, column=2, sticky="e", pady=(4, 0))
-        ttk.Checkbutton(opt, text="Open the report when it is finished", variable=self.open_var).grid(row=6, column=0, columnspan=3, sticky="w")
+            row=2, column=0, columnspan=3, sticky="w")
+        ttk.Label(opt, text="Recorded at (files with no date in their name):").grid(row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Entry(opt, textvariable=self.start_var, width=20).grid(row=3, column=1, sticky="w", padx=6, pady=(4, 0))
+        ttk.Label(opt, text="e.g. 2026-10-01 08:30", foreground="gray").grid(row=3, column=2, sticky="e", pady=(4, 0))
+        ttk.Label(opt, text="Parallel processes (0 = automatic):").grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Spinbox(opt, from_=0, to=64, width=5, textvariable=self.workers_var).grid(row=4, column=2, sticky="e", pady=(4, 0))
+        ttk.Checkbutton(opt, text="Open the report when it is finished", variable=self.open_var).grid(row=5, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(opt, text="My machines have signal lamps (look for them while learning)", variable=self.lamps_var).grid(row=6, column=0, columnspan=3, sticky="w")
 
         run = ttk.Frame(f)
         run.grid(row=4, column=0, sticky="ew")
@@ -189,9 +197,17 @@ class App:
         self.status.grid(row=5, column=0, sticky="nw", pady=(6, 0))
         f.rowconfigure(5, minsize=44)  # room for two lines, so the log below does not jump
 
+        end = ttk.Frame(f)
+        end.grid(row=6, column=0, sticky="w", pady=(4, 0))
+        self.report_btn = ttk.Button(end, text="Open the report", command=self.open_report, state="disabled")
+        self.report_btn.grid(row=0, column=0)
+        self.folder_btn = ttk.Button(end, text="Open the results folder", command=self.open_folder, state="disabled")
+        self.folder_btn.grid(row=0, column=1, padx=6)
+        ttk.Button(end, text="Copy the log", command=self.copy_log).grid(row=0, column=2)
+
         logf = ttk.Frame(f)
-        logf.grid(row=6, column=0, sticky="nsew", pady=6)
-        f.rowconfigure(6, weight=3)
+        logf.grid(row=7, column=0, sticky="nsew", pady=6)
+        f.rowconfigure(7, weight=3, minsize=60)  # the log is what gives way on a small screen; the buttons above it stay
         logf.columnconfigure(0, weight=1)
         logf.rowconfigure(0, weight=1)
         self.log = tk.Text(logf, height=12, wrap="word", state="disabled", font="TkFixedFont")
@@ -199,14 +215,6 @@ class App:
         self.log.configure(yscrollcommand=sb.set)
         self.log.grid(row=0, column=0, sticky="nsew")
         sb.grid(row=0, column=1, sticky="ns")
-
-        end = ttk.Frame(f)
-        end.grid(row=7, column=0, sticky="w")
-        self.report_btn = ttk.Button(end, text="Open the report", command=self.open_report, state="disabled")
-        self.report_btn.grid(row=0, column=0)
-        self.folder_btn = ttk.Button(end, text="Open the results folder", command=self.open_folder, state="disabled")
-        self.folder_btn.grid(row=0, column=1, padx=6)
-        ttk.Button(end, text="Copy the log", command=self.copy_log).grid(row=0, column=2)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     # ---- choosing the input ----------------------------------------------------------------------------------------
@@ -289,7 +297,7 @@ class App:
         except ValueError:
             workers = 0
         cmd = self.build(self.paths, out=self.out_var.get().strip() or None, workers=workers or None, relearn=self.relearn_var.get(),
-                         doctor=doctor, one_camera=self.one_var.get(), start=start or None)
+                         doctor=doctor, one_camera=self.one_var.get(), start=start or None, lamps=self.lamps_var.get())
         self.report, self.saved, self.stopping, self.mode = None, None, False, "check" if doctor else "analyze"
         self._set_log("")
         try:

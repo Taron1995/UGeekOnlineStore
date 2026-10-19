@@ -342,12 +342,13 @@ def _setup_items(cam_cfg: dict, info: dict):
         matched += [m] if m else []
         items.append(f"{label} <b>{esc(z['name'])}</b>" + (f": people stood here for {_dur(m['total_s'])} in total (sampled footage)" if m else hand))
     for mc in cam_cfg["machines"]:
-        lamp = mc["source"] == "lamp"
-        m = found(lamps if lamp else motion, mc["roi"])
+        lamp, work = mc["source"] == "lamp", mc["source"] == "activity"
+        m = None if work else found(lamps if lamp else motion, mc["roi"])
         matched += [m] if m else []
         detail = (f"colours seen {esc(', '.join(m['colours']))}" if lamp else f"moving in {100 * m['freq']:.0f}% of the frames") if m else ""
         link = f" (linked to {esc(mc['zone'])})" if mc.get("zone") else ""
-        items.append(f"{'signal lamp' if lamp else 'moving machine zone'} <b>{esc(mc['name'])}</b>{link}" + (f": {detail}" if m else hand))
+        what = "signal lamp" if lamp else "processing section (work by people)" if work else "moving machine zone"
+        items.append(f"{what} <b>{esc(mc['name'])}</b>{link}" + (f": {detail}" if m else hand))
     by_hand = sum(1 for x in items if "drawn by hand" in x)
     return items, len(matched), by_hand, len(spots) + len(lamps) + len(motion) - len(matched)
 
@@ -370,10 +371,11 @@ def _setup_section(setup: dict, cfg: dict | None = None) -> str:
         figs.append(f"<figure>{img}<figcaption><b>{html.escape(cam)}</b> · {how}{ul}</figcaption></figure>")
     tag = "learned automatically and / or drawn by hand - please check" if hand_any else "automatic - please check"
     return (f"<section><h2>{'Learned setup' if learned_any else 'Setup'} <span class='tag'>{tag}</span></h2>"
-            "<p class=sub>Green = stations (where people work), orange = machines (a moving part, or a lamp), blue = where people are followed, red = ignored. "
+            "<p class=sub>Green = stations (where people work), orange = machines (a processing section where people work, a moving part, or a lamp), blue = where people are followed, red = ignored. "
             "This is a best guess made from the footage itself, or what you drew: if something is wrong or missing, draw it with "
             "<code>python -m videoanalytics zones</code> on the same videos (or edit <code>cameras.auto.yaml</code> in the results folder: delete or move a zone, add a "
-            "<code>schedule</code>) and run the same command again.</p>"
+            "<code>schedule</code>) and run the same command again. A machine that people work on and that has no lamp is not found by itself: draw its "
+            "<b>processing section</b> - it counts as working while someone stays there and something in it moves.</p>"
             f"<div class='setupgrid'>{''.join(figs)}</div></section>")
 
 
@@ -590,7 +592,8 @@ def write_reports(out_dir: Path, idle_min_s: float = 300.0, cfg: dict | None = N
                      "the schedule expects someone there. Tables: stations_daily.csv, absences.csv.</p></section>")
     if mach_rows:
         parts.append(f"<section><h2>Machines</h2>{_table(['Camera', 'Machine', 'Working', 'Work', 'Idle', 'Red lamp', 'Cycles', 'Work without operator'], mach_rows, (0, 1))}"
-                     "<p class='note'>Working = signal lamp colour (lamp source) or motion in the machine zone (motion source): a proxy, not a machine signal. "
+                     "<p class='note'>Working = a person who has stayed at the machine's processing section while something moves there (activity source), motion in the "
+                     "machine zone with people masked out (motion source) or the signal lamp colour (lamp source): a proxy, not a machine signal. "
                      "Work without operator needs the machine linked to a station zone. Table: machines_hourly.csv.</p></section>")
     for name, header, rows in (("timeline.csv", ["camera", "time", "analysed_s", "avg_people", "peak_people"], tl["people"]),
                                ("stations_timeline.csv", ["camera", "zone", "time", "analysed_s", "occupied_s"], tl["zones"]),

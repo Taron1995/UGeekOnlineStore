@@ -298,7 +298,7 @@ def sample_hints(samples: list[dict]) -> list[str]:
             notes.append(f"{where}: decoding runs at only {s['decode_fps']:.0f} frames per second ({s['codec']}, {s['width']}x{s['height']}); "
                          f"expect a long run. --hw-decode may help; so may --hours.")
         if s["coloured"] < 0.2:
-            notes.append(f"{where}: the picture has almost no colour (night / infrared mode?). People are still found, signal-lamp colours cannot be read.")
+            notes.append(f"{where}: the picture has almost no colour (night / infrared mode?). People are still found; the colour of signal lamps, if you use them, cannot be read.")
         if s["width"] < 480:
             notes.append(f"{where}: small picture ({s['width']}x{s['height']}); people far from the camera may be missed.")
     return list(dict.fromkeys(notes))
@@ -355,6 +355,7 @@ def result_text(out_dir: Path) -> str:
                 zones, machines = (c or {}).get("zones") or [], (c or {}).get("machines") or []
                 lines.append(f"  {cam}: setup used: {sum(1 for z in zones if z.get('kind', 'workstation') == 'workstation')} station(s), "
                              f"{sum(1 for z in zones if z.get('kind', 'workstation') != 'workstation')} other zone(s), "
+                             f"{sum(1 for m in machines if m.get('source') == 'activity')} processing section(s), "
                              f"{sum(1 for m in machines if m.get('source', 'motion') == 'motion')} moving machine zone(s), "
                              f"{sum(1 for m in machines if m.get('source') == 'lamp')} signal lamp(s), {len((c or {}).get('areas') or [])} tracking area(s)")
         except Exception:  # noqa: BLE001 - a hand-edited file may be broken; the analysis already refused it if so

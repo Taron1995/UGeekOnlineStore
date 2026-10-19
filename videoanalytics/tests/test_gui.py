@@ -24,7 +24,8 @@ def test_command_for_the_check_and_for_camera_options(tmp_path):
     assert "--no-open" not in check and "--rediscover" not in check  # neither applies to the check
     assert check[check.index("--out") + 1] == str(tmp_path / "res") and "--one-camera" in check and check[check.index("--start") + 1] == "2026-10-01 08:30"
     run = build_command(["x.mp4"], python="py", one_camera=True, start="2026-10-01 08:30")
-    assert run[3] == "analyze" and "--one-camera" in run and "--start" in run and "--no-open" in run
+    assert run[3] == "analyze" and "--one-camera" in run and "--start" in run and "--no-open" in run and "--lamps" not in run
+    assert "--lamps" in build_command(["x.mp4"], python="py", lamps=True) and "--lamps" not in build_command(["x.mp4"], python="py", lamps=True, doctor=True)
 
 
 def test_output_lines_are_understood():
@@ -214,7 +215,28 @@ def test_camera_options_reach_the_command(root):
     app.workers_var.set("3")
     app.start()
     assert wait(root, lambda: app.job is None)
-    assert seen == [dict(out=None, workers=3, relearn=False, doctor=False, one_camera=True, start="2026-10-01 08:30")]
+    assert seen == [dict(out=None, workers=3, relearn=False, doctor=False, one_camera=True, start="2026-10-01 08:30", lamps=False)]
+
+
+@pytest.mark.parametrize("screen_h", [1080, 768, 720])
+def test_the_window_is_never_taller_than_the_screen_and_keeps_its_buttons(root, monkeypatch, screen_h):
+    """On a 1366x768 laptop the buttons below the log (open the report, copy the log) sat behind the taskbar."""
+    monkeypatch.setattr(root, "winfo_screenheight", lambda: screen_h)
+    app = gui.App(root)
+    root.update()
+    assert root.winfo_height() <= screen_h - 120  # room for the title bar and the taskbar
+    assert app.report_btn.winfo_rooty() + app.report_btn.winfo_height() <= root.winfo_rooty() + root.winfo_height()  # the last row is inside the window
+    if screen_h >= 900:
+        assert app.log.winfo_height() >= 150  # on a big screen nothing has to give way; on a small one the log does, the buttons above it do not
+
+
+def test_the_log_takes_the_room_the_window_is_given(root):
+    app = gui.App(root)
+    root.update()
+    before = app.log.winfo_height()
+    root.geometry(f"{root.winfo_width()}x{root.winfo_height() + 200}")  # a bigger window (or a maximised one)
+    root.update()
+    assert app.log.winfo_height() >= before + 150
 
 
 def test_a_start_time_that_cannot_be_read_is_refused_before_anything_runs(root, monkeypatch):

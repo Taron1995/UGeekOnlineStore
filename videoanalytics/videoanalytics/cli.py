@@ -121,7 +121,7 @@ def cmd_analyze(a):
     analyze(a.paths, out=a.out, config=a.config, model=a.model, workers=a.workers, open_report=not a.no_open, auto=not a.no_auto,
             rediscover=a.rediscover, learn_minutes=a.learn_minutes, chunk_min=a.chunk_min, hours=parse_hours(a.hours) if a.hours else None,
             fps=a.fps, conf=a.conf, clips=not a.no_clips, hw_decode=a.hw_decode, no_gate=a.no_gate, time_regex=a.time_regex,
-            start=a.start, one_camera=one_camera_of(a))
+            start=a.start, one_camera=one_camera_of(a), lamps=a.lamps)
 
 
 def cmd_doctor(a):
@@ -285,7 +285,8 @@ def main(argv=None):
     p.add_argument("--workers", type=int)
     p.add_argument("--no-open", action="store_true", help="do not open the report in the browser")
     p.add_argument("--no-auto", action="store_true", help="skip scene learning: people counting only")
-    p.add_argument("--rediscover", action="store_true", help="learn the scene again even if <out>/cameras.auto.yaml exists")
+    p.add_argument("--rediscover", action="store_true", help="learn the scene again even if <out>/cameras.auto.yaml exists (the old file is kept as .bak)")
+    p.add_argument("--lamps", action="store_true", help="also look for signal lamps (stack lights) while learning - only if your machines have them")
     p.add_argument("--learn-minutes", type=float, default=6, help="footage sampled per camera for scene learning")
     p.add_argument("--chunk-min", type=float, default=20, help="cut recordings longer than this into chunks so all cores are used (0 = off)")
     p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")

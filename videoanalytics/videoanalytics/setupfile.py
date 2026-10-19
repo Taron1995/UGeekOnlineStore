@@ -13,7 +13,7 @@ from .config import check_config
 from .tools import snapshot
 
 SETUP_FILE = "cameras.auto.yaml"
-HEADER = """# Your setup: stations (where people work), machines (a moving part, or a signal lamp) and tracking areas, per camera.
+HEADER = """# Your setup: stations (where people work), machines (a processing section where people work, a moving part, or a signal lamp) and tracking areas, per camera.
 # It was learned from the footage and / or drawn by hand (python -m videoanalytics zones ...). It is a starting point, not the truth:
 # open the pictures in the 'setup' folder, correct what is wrong (by hand here, or in the zone editor), save, and run the same command
 # again - this file is used as it is, and only the cameras whose setup changed are computed again.

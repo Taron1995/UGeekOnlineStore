@@ -18,13 +18,13 @@ AREA = {"name", "polygon", "mode"}
 AREA_MODES = ("watch", "ignore")
 LINE = {"name", "p1", "p2", "margin"}
 MACHINE = {"name", "source", "roi", "polygon", "zone", "motion_thr", "window_s", "on_frac", "off_frac", "sat_min",
-           "val_min", "min_frac", "work_colors", "hues", "cycle"}
+           "val_min", "min_frac", "work_colors", "hues", "cycle", "min_present_s", "min_overlap"}
 CYCLE = {"window_s", "on_frac", "off_frac", "min_work_s", "min_idle_s"}
 GATHERING = {"min_people", "dist_k", "min_duration_s", "gap_s"}
 INACTIVITY = {"method", "zones", "min_duration_s", "gap_s", "sample_period_s", "motion_thr", "require_seated", "pose_model"}
 WORKPIECES = {"weights", "model", "classes", "threshold", "line", "count", "min_hits", "trust_checkpoint", "device"}
 SCHEDULE = {"work", "breaks", "days"}
-SOURCES = {"motion", "lamp"}
+SOURCES = {"motion", "lamp", "activity"}  # activity: work done BY PEOPLE in the section (machines without a lamp, manual work)
 
 
 class ConfigError(ValueError):

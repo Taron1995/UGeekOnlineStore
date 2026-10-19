@@ -117,6 +117,45 @@ def test_each_kind_has_its_own_names_and_a_name_can_be_chosen(editor):
     assert len(editor.shapes["cam1"]) == 2
 
 
+@pytest.mark.parametrize("screen_h, rows", [(1080, 6), (768, 6), (720, 4)])
+def test_the_window_fits_the_screen_so_that_save_stays_in_sight(root, tmp_path, monkeypatch, screen_h, rows):
+    """The panel on the right sets the height of the window: on a 1366x768 laptop Save sat behind the taskbar."""
+    make_video(tmp_path / "cam1_20261001_080000.mp4", 10, lambda f, t: None)
+    monkeypatch.setattr(root, "winfo_screenheight", lambda: screen_h)
+    monkeypatch.setattr(root, "winfo_screenwidth", lambda: 1366)
+    ed = ZoneEditor(root, open_session([str(tmp_path)]))
+    root.update()
+    assert ed.list_rows == rows and int(ed.listbox.cget("height")) == rows
+    assert ed.top.winfo_reqheight() <= screen_h - 72 and ed.top.winfo_reqwidth() <= 1366  # title bar + taskbar below, the screen's width across
+
+
+def test_a_long_list_of_shapes_scrolls(editor):
+    for i in range(9):
+        draw(editor, SQ(0.05 + 0.1 * i, 0.5, 0.05))
+    editor.top.update()
+    assert editor.listbox.size() == 9 and editor.listbox.yview()[1] < 1.0  # more shapes than rows: the rest is below
+    assert editor.list_scroll.get() == pytest.approx(editor.listbox.yview())  # the scroll bar shows where the visible part is
+    editor.listbox.yview_moveto(1.0)
+    editor.top.update()
+    assert editor.listbox.yview()[1] == 1.0 and editor.list_scroll.get()[1] == 1.0
+
+
+def test_a_processing_section_is_listed_by_what_it_is_and_belongs_to_no_station(editor):
+    draw(editor, [(0.1, 0.5), (0.3, 0.5), (0.3, 0.8), (0.1, 0.8)])  # spot1
+    editor.kind_var.set("activity")
+    editor._kind_changed()
+    assert editor.name_var.get() == "work1"
+    shape = draw(editor, [(0.1, 0.2), (0.3, 0.2), (0.3, 0.4), (0.1, 0.4)])  # right above the station, where a moving part would be linked to it
+    assert (shape.kind, shape.name, shape.zone) == ("activity", "work1", "") and "Added processing section 'work1'" in editor.status_var.get()
+    assert [editor.listbox.get(i) for i in range(2)] == ["spot1   (station)", "work1   (processing section)"]
+    editor.listbox.selection_clear(0, "end")
+    editor.listbox.selection_set(1)
+    editor.listbox.event_generate("<<ListboxSelect>>")
+    assert str(editor.link_box.cget("state")) == "disabled"  # nothing to choose: the people who work there are the station's
+    (machine,) = read_config(editor.save())["cameras"]["cam1"]["machines"]
+    assert machine["source"] == "activity" and "zone" not in machine and machine["min_present_s"] == 8
+
+
 def test_select_link_and_delete(editor):
     draw(editor, [(0.1, 0.5), (0.3, 0.5), (0.3, 0.8), (0.1, 0.8)])  # spot1
     editor.kind_var.set("motion")

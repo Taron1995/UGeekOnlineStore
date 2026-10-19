@@ -91,6 +91,7 @@ def test_machines_lamp_cycles_and_unattended_time(tmp_path):
     assert sum(float(r["work_min"]) for r in hourly) == 100 and sum(int(r["cycles"]) for r in hourly) == 200
     assert sum(float(r["work_attended_min"]) for r in hourly) == 50  # operator present for half of the work
     assert "Work without operator" in html and ">50 min<" in html  # 100 - 50 minutes unattended
+    assert "stayed at the machine's processing section while something moves there (activity source)" in html  # what "Working" means for a machine without a lamp
     (idle,) = rows(tmp_path / "idle_periods.csv")
     assert (idle["machine"], idle["start"], idle["duration_min"], idle["clip"]) == ("lathe", "2026-10-01 09:40:00", "140.0", "clips/cam1/x_idle.mp4")
     assert "completed cycles" in html and 'src="clips/cam1/x_idle.jpg"' in html
@@ -197,19 +198,27 @@ def test_setup_block_of_a_pure_learning_result():
     assert "station <b>spot1</b>: people stood here for 2.7 min in total" in block and "colours seen green, red" in block and "moving in 62% of the frames" in block
     assert "drawn by hand" not in block.split("<ul>")[1] and "learned from 70 s of footage</figcaption>" not in block  # the caption closes with the list
     assert 'src="setup/cam1.jpg"' in block and "python -m videoanalytics zones" in block
+    assert "has no lamp is not found by itself: draw its <b>processing section</b>" in block  # a machine people work on has to be drawn
 
 
 def test_setup_block_of_zones_drawn_by_hand_only():
     cfg = dict(cameras=dict(cam1=dict(zones=[dict(name="press", polygon=SQUARE(0.1, 0.1), kind="workstation"), dict(name="break", polygon=SQUARE(0.5, 0.5), kind="rest")],
-                                      machines=[dict(name="m1", source="motion", roi=SQUARE(0.7, 0.1), zone="press")],
+                                      machines=[dict(name="m1", source="motion", roi=SQUARE(0.7, 0.1), zone="press"),
+                                                dict(name="work1", source="activity", roi=SQUARE(0.4, 0.6, 0.15)), dict(name="l1", source="lamp", roi=SQUARE(0.9, 0.1, 0.05))],
                                       areas=[dict(name="floor", polygon=SQUARE(0, 0, 1), mode="watch"), dict(name="tv", polygon=SQUARE(0.8, 0.8, 0.1), mode="ignore")])))
     block = _setup_section({}, cfg)
     assert "<h2>Setup <span class='tag'>learned automatically and / or drawn by hand - please check</span></h2>" in block
     assert "<b>cam1</b> · drawn by hand" in block
     for fragment in ("station <b>press</b>", "rest zone <b>break</b>", "moving machine zone <b>m1</b> (linked to press)", "tracking area <b>floor</b>: people are followed only in here",
-                     "ignored area <b>tv</b>: people are not analysed in here"):
+                     "ignored area <b>tv</b>: people are not analysed in here", "processing section (work by people) <b>work1</b>", "signal lamp <b>l1</b>"):
         assert fragment in block
-    assert block.count("(drawn by hand)") == 5
+    assert block.count("(drawn by hand)") == 7 and "a processing section where people work" in block  # the legend knows the new kind
+
+
+def test_a_processing_section_is_never_taken_for_a_learned_moving_part():
+    cam = dict(zones=[], machines=[dict(name="work1", source="activity", roi=LEARNED["motion"][0]["polygon"])])  # drawn over the very place where movement was learned
+    block = _setup_section({"cam1": LEARNED}, dict(cameras=dict(cam1=cam)))
+    assert "processing section (work by people) <b>work1</b> <span class=tag>(drawn by hand)</span>" in block and "moving in 62%" not in block
 
 
 def test_setup_block_after_editing_what_was_learned():

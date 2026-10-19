@@ -21,6 +21,7 @@ def scene(path, seconds=80):
 
 
 def run(tmp_path, *paths, **kw):
+    kw.setdefault("lamps", True)  # the scene has a stack light; lamps are only looked for when asked
     return analyze([str(p) for p in paths], detect=two_people, open_report=False, workers=1, **kw)
 
 
@@ -41,7 +42,7 @@ def test_one_video_in_report_out(tmp_path, capsys):
     assert "cam1" in html and "lamp1" in html and "spot1" in html
     diag = (out / "diagnostics.txt").read_text(encoding="utf-8")  # what to send if something looks wrong
     assert "== Computer" in diag and "== Samples" in diag and "== Result" in diag and "learned 2 station(s)" in diag and "speed of this run" in diag
-    assert "cam1: setup used: 2 station(s), 0 other zone(s), 0 moving machine zone(s), 1 signal lamp(s), 0 tracking area(s)" in diag
+    assert "cam1: setup used: 2 station(s), 0 other zone(s), 0 processing section(s), 0 moving machine zone(s), 1 signal lamp(s), 0 tracking area(s)" in diag
     assert f"Diagnostics (send this file if something looks wrong): {out / 'diagnostics.txt'}" in text
 
 
@@ -295,3 +296,25 @@ def test_learning_again_keeps_the_setup_that_was_there(tmp_path, capsys):
     run(tmp_path, v, rediscover=True)
     assert "the previous setup is kept as cameras.auto.yaml.bak" in capsys.readouterr().out
     assert setup.with_name("cameras.auto.yaml.bak").read_text(encoding="utf-8") == mine and "my_press" not in setup.read_text(encoding="utf-8")
+
+
+def test_lamps_are_only_looked_for_when_asked(tmp_path, capsys):
+    scene(tmp_path / "cam1_20261001_080000.mp4", 40)
+    run(tmp_path, tmp_path / "cam1_20261001_080000.mp4", lamps=False)  # the default: a machine without a lamp gets no false ones from signs and LEDs
+    out = tmp_path / "cam1_20261001_080000_analysis"
+    cam = yaml.safe_load((out / "cameras.auto.yaml").read_text(encoding="utf-8"))["cameras"]["cam1"]
+    text = capsys.readouterr().out
+    assert [m for m in cam["machines"] if m["source"] == "lamp"] == [] and "signal lamp" not in text.split("Learning the scene")[1].split("Setup written")[0]
+    assert "which lights switch" not in text
+    run(tmp_path, tmp_path / "cam1_20261001_080000.mp4", lamps=True, rediscover=True)
+    again = yaml.safe_load((out / "cameras.auto.yaml").read_text(encoding="utf-8"))["cameras"]["cam1"]
+    assert [m["source"] for m in again["machines"]] == ["lamp"] and "1 signal lamp(s)" in capsys.readouterr().out
+
+
+def test_the_lamps_flag_reaches_analyze(monkeypatch):
+    from videoanalytics import cli
+    seen = []
+    monkeypatch.setattr(cli, "analyze", lambda paths, **kw: seen.append(kw))
+    cli.main(["analyze", "x.mp4"])
+    cli.main(["analyze", "x.mp4", "--lamps"])
+    assert [k["lamps"] for k in seen] == [False, True]

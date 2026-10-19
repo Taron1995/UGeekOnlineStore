@@ -3,7 +3,9 @@
 A few minutes sampled across a camera's footage are enough to see
 * where people stay put      -> station zones      (stationary foot points, clustered)
 * where something keeps moving -> motion machines   (people masked out; clock overlays and borders ignored)
-* where small coloured lights switch -> lamp machines (a stack light cycles colours, a blinking lamp is on part of the time)
+* where small coloured lights switch -> lamp machines (a stack light cycles colours, a blinking lamp is on part of the time); only when asked for
+  (`lamps=True`): most machines have no lamp, and guessing one from a coloured sign or a cone only adds wrong machines
+A machine that people work on has nothing to learn from but their presence: its processing section is drawn by hand (zoneeditor, source `activity`).
 Everything is a heuristic: the result is written as an editable cameras.auto.yaml and drawn on a snapshot so it can be checked."""
 from __future__ import annotations
 
@@ -246,18 +248,19 @@ def build_camera_config(spots, motion, lamps, link_dist: float = 0.3) -> dict:
     return cam
 
 
-def learn_scene(srcs, detect, *, minutes: float = 6.0, fps: float = 2.0, windows: int = 6, hours=None, dwell_s: float = 15.0):
+def learn_scene(srcs, detect, *, minutes: float = 6.0, fps: float = 2.0, windows: int = 6, hours=None, dwell_s: float = 15.0, lamps: bool = False):
     """Learns one camera's setup from its recordings. Returns (camera_config, info, preview) where preview = (source, second)
-    of a frame to draw the overlay on."""
+    of a frame to draw the overlay on. Signal lamps are only looked for when asked (lamps=True): a machine without one would get false
+    ones from signs, LEDs and reflections."""
     wins = sample_windows(srcs, minutes * 60.0, windows, hours)
     if not wins:
         raise ValueError("no footage inside the analysed hours")
     learner = SceneLearner(dwell_s)
     for src, start, length in wins:
         learner.window(window_frames(src, start, length, fps), detect, fps)
-    spots, motion, lamps = learner.spots(), learner.motion_regions(), learner.lamps()
-    cfg = build_camera_config(spots, motion, lamps)
+    spots, motion, found = learner.spots(), learner.motion_regions(), learner.lamps() if lamps else []
+    cfg = build_camera_config(spots, motion, found)
     info = dict(sampled_s=round(sum(w[2] for w in wins)), windows=len(wins), frames=learner.frames, person_tracks=learner.person_ids,
-                spots=spots, motion=motion, lamps=lamps)
+                spots=spots, motion=motion, lamps=found, lamps_looked_for=lamps)
     src0, start0, length0 = wins[len(wins) // 2]
     return cfg, info, (src0, start0 + length0 / 2)

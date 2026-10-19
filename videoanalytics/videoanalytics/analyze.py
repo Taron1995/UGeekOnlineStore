@@ -230,21 +230,21 @@ def estimate(srcs, cams, opts, make_detect, workers, bench_s: float = 15.0):
 def learn_task(task: dict) -> dict:
     """Worker side: learn one camera's setup. Never raises."""
     try:
-        cfg, info, (psrc, at) = learn_scene(task["srcs"], pipeline._DET.detect, minutes=task["minutes"], hours=task["hours"])
+        cfg, info, (psrc, at) = learn_scene(task["srcs"], pipeline._DET.detect, minutes=task["minutes"], hours=task["hours"], lamps=task.get("lamps", False))
         return dict(ok=True, camera=task["camera"], cfg=cfg, info=info, preview=(psrc["path"], at))
     except Exception as e:  # noqa: BLE001
         return dict(ok=False, camera=task["camera"], error=repr(e))
 
 
-def learn_cameras(srcs, match, opts, out: Path, model, workers, minutes: float, detect=None):
+def learn_cameras(srcs, match, opts, out: Path, model, workers, minutes: float, detect=None, lamps: bool = False):
     """Learns every camera; returns the full config dict (and writes cameras.auto.yaml, snapshots and setup/setup.json)."""
     by_cam: dict = {}
     for s in srcs:
         by_cam.setdefault(s["camera"], []).append(s)
-    tasks = [dict(camera=c, srcs=v, minutes=minutes, hours=opts["active_hours"]) for c, v in by_cam.items()]
+    tasks = [dict(camera=c, srcs=v, minutes=minutes, hours=opts["active_hours"], lamps=lamps) for c, v in by_cam.items()]
     w = min(workers or os.cpu_count() or 1, len(tasks))
     print(f"Learning the scene of {len(tasks)} camera(s) from about {minutes:.0f} min of footage each "
-          f"(where people stay, what keeps moving, which lights switch) ...", flush=True)
+          f"(where people stay, what keeps moving{', which lights switch' if lamps else ''}) ...", flush=True)
     results = {}
     with Runner(model, opts["conf"], w, detect) as rn:
         for r in rn.imap(learn_task, tasks):
@@ -270,7 +270,9 @@ def learn_cameras(srcs, match, opts, out: Path, model, workers, minutes: float, 
 
 
 def _describe(info: dict) -> str:
-    parts = [f"{len(info['spots'])} station(s)", f"{len(info['motion'])} moving machine zone(s)", f"{len(info['lamps'])} signal lamp(s)"]
+    parts = [f"{len(info['spots'])} station(s)", f"{len(info['motion'])} moving machine zone(s)"]
+    if info.get("lamps_looked_for"):
+        parts.append(f"{len(info['lamps'])} signal lamp(s)")
     return ", ".join(parts) + f"  ({info['person_tracks']} person track(s) seen in {info['sampled_s']} s)"
 
 
@@ -299,10 +301,11 @@ def write_diagnostics(out: Path, srcs, issues, samples, paths, opts, workers, fi
 
 def analyze(paths, *, out=None, config=None, model=None, workers=None, open_report=True, auto=True, rediscover=False,
             learn_minutes: float = 6.0, chunk_min: float = 20.0, hours=None, fps=None, conf=None, clips=True, hw_decode=False,
-            no_gate=False, time_regex=None, detect=None, limit_files=None, start=None, one_camera=None) -> Path:
+            no_gate=False, time_regex=None, detect=None, limit_files=None, start=None, one_camera=None, lamps=False) -> Path:
     """Analyse the given videos / folders end to end and return the path of report.html.
     start: '2026-10-01 08:00', when files that carry no time in their name were recorded (they follow each other from there);
-    one_camera: all files are parts of one camera (its name; '' = the folder name)."""
+    one_camera: all files are parts of one camera (its name; '' = the folder name);
+    lamps: also look for signal lamps (stack lights) while learning - only for machines that have them."""
     t_all = time.time()
     root, files = resolve_inputs(paths)
     out = Path(out) if out else default_out(root, paths)
@@ -341,7 +344,7 @@ def analyze(paths, *, out=None, config=None, model=None, workers=None, open_repo
 
     if cfg is None:
         if auto:
-            cfg = learn_cameras(srcs, match, opts, out, model_path, workers, learn_minutes, detect)
+            cfg = learn_cameras(srcs, match, opts, out, model_path, workers, learn_minutes, detect, lamps)
         else:
             cfg = {"cameras": {c: {"match": m["match"], **build_camera_config([], [], [])} for c, m in match.items()}}
         cams = {k: normalize_camera(v) for k, v in cfg["cameras"].items()}

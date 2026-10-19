@@ -1,5 +1,6 @@
-"""Marking the zones by hand: draw tracking areas, stations, machines and signal lamps on a frame of a camera, and save them as the setup that
-`analyze` uses. The window (tkinter) is at the bottom; everything above it - shapes <-> config, checks, saving - has no window and is tested alone."""
+"""Marking the zones by hand: draw tracking areas, stations and machines (the section where people work on one, its moving part, a signal lamp)
+on a frame of a camera, and save them as the setup that `analyze` uses. The window (tkinter) is at the bottom; everything above it - shapes <->
+config, checks, saving - has no window and is tested alone."""
 from __future__ import annotations
 
 import random
@@ -33,10 +34,20 @@ KINDS = {
     "ignore": ("Ignored area: nobody here is analysed", "#e5484d", "ignore"),
     "station": ("Station: a person works here", "#2ea043", "spot"),
     "rest": ("Rest or common zone", "#12b3a8", "rest"),
-    "motion": ("Machine: the moving part", "#f08c00", "motion"),
+    "activity": ("Machine: processing section (people work here)", "#e8590c", "work"),
+    "motion": ("Machine: moving part (runs by itself)", "#f08c00", "motion"),
     "lamp": ("Machine: signal lamp", "#d63fd0", "lamp"),
 }
-DEFAULT_EXTRA = {"motion": {"motion_thr": 0.02, "window_s": 10}, "lamp": {"work_colors": ["green"]}}  # what the scene learning gives new machines too
+MACHINE_KINDS = ("activity", "motion", "lamp")  # shapes that are machines (their names live apart from the zones')
+LINKED = ("motion", "lamp")  # machines that can belong to a station; in a processing section the people are there by definition
+DEFAULT_EXTRA = {"activity": {"motion_thr": 0.02, "window_s": 10, "min_present_s": 8},
+                 "motion": {"motion_thr": 0.02, "window_s": 10}, "lamp": {"work_colors": ["green"]}}  # what the scene learning gives new machines too
+
+
+def kind_word(kind: str) -> str:
+    """What a shape is called in the list and in messages: 'station', 'processing section', 'signal lamp', ..."""
+    head, _, rest = KINDS[kind][0].partition(": ")
+    return (rest.split(" (")[0] if kind in MACHINE_KINDS else head).lower()
 
 
 # ---- shapes <-> config --------------------------------------------------------------------------------------------------
@@ -50,7 +61,7 @@ class Shape:
 
 
 def new_shape(kind: str, name: str, points) -> Shape:
-    return Shape(kind, name, [[float(x), float(y)] for x, y in points], None if kind in ("motion", "lamp") else "", dict(DEFAULT_EXTRA.get(kind, {})))
+    return Shape(kind, name, [[float(x), float(y)] for x, y in points], None if kind in LINKED else "", dict(DEFAULT_EXTRA.get(kind, {})))
 
 
 def shapes_of(cam_cfg: dict) -> list[Shape]:
@@ -65,7 +76,7 @@ def shapes_of(cam_cfg: dict) -> list[Shape]:
         out.append(Shape("station" if z.get("kind", "workstation") == "workstation" else "rest", z["name"], pts(z["polygon"]),
                          extra={k: v for k, v in z.items() if k not in ("name", "polygon")}))
     for m in cam["machines"]:
-        out.append(Shape("lamp" if m["source"] == "lamp" else "motion", m["name"], pts(m["roi"]), m.get("zone", ""),
+        out.append(Shape(m["source"] if m["source"] in MACHINE_KINDS else "motion", m["name"], pts(m["roi"]), m.get("zone", ""),
                          {k: v for k, v in m.items() if k not in ("name", "roi", "zone", "source")}))
     return out
 
@@ -85,9 +96,9 @@ def problems(shapes: list[Shape]) -> list[str]:
     """Everything that would make a saved setup wrong or refused, in plain words."""
     out, seen = [], {}
     for s in shapes:
-        space = "area" if s.kind in ("watch", "ignore") else "machine" if s.kind in ("motion", "lamp") else "zone"  # names only have to differ within a kind of thing
+        space = "area" if s.kind in ("watch", "ignore") else "machine" if s.kind in MACHINE_KINDS else "zone"  # names only have to differ within a kind of thing
         if not s.name.strip():
-            out.append(f"a {KINDS[s.kind][0].split(':')[0].lower()} has no name")
+            out.append(f"a {kind_word(s.kind)} has no name")
         if (space, s.name) in seen:
             out.append(f"the name '{s.name}' is used twice among the {space}s")
         seen[(space, s.name)] = True
@@ -114,9 +125,11 @@ def apply_shapes(cam_cfg: dict, shapes: list[Shape], link_dist: float = 0.3) -> 
     stations = [(z["name"], z["polygon"]) for z in zones if z["kind"] == "workstation"]
     machines = []
     for s in shapes:
-        if s.kind in ("motion", "lamp"):
+        if s.kind in MACHINE_KINDS:
             poly = r4(s.points)
-            link = s.zone if s.zone in {n for n, _ in stations} else (nearest_station(poly, stations, link_dist) if s.zone != "" else None)
+            link = None
+            if s.kind in LINKED:
+                link = s.zone if s.zone in {n for n, _ in stations} else (nearest_station(poly, stations, link_dist) if s.zone != "" else None)
             machines.append({"name": s.name, "source": s.kind, "roi": poly, **({"zone": link} if link else {}), **s.extra})
     cam["zones"] = zones
     areas = [{"name": s.name, "mode": s.kind, "polygon": r4(s.points), **s.extra} for s in shapes if s.kind in ("watch", "ignore")]
@@ -194,7 +207,8 @@ class ZoneEditor:
             raise RuntimeError(NEEDS_TK)
         self.top, self.session, self.on_saved = parent, session, on_saved
         sw, sh = parent.winfo_screenwidth(), parent.winfo_screenheight()
-        self.CANVAS = (max(560, min(960, sw - 420)), max(320, min(560, sh - 230)))  # the picture as large as the screen allows, the panel on the right stays visible
+        self.CANVAS = (max(560, min(960, sw - 450)), max(320, min(560, sh - 230)))  # the picture as large as the screen allows, the panel on the right stays visible
+        self.list_rows = 6 if sh >= 760 else 4  # the panel sets the height of the window: on a small screen the list gets shorter, so Save stays above the taskbar
         self.shapes: dict[str, list[Shape]] = {}  # per camera, loaded when the camera is first shown
         self.dirty: set[str] = set()  # cameras changed since the last save
         self.points: list[list[float]] = []  # the shape being drawn
@@ -242,8 +256,14 @@ class ZoneEditor:
         for i, (text, cmd) in enumerate((("Finish shape", self.finish), ("Remove last corner", self.undo_point), ("Cancel", self.cancel))):
             ttk.Button(btns, text=text, command=cmd).grid(row=0, column=i, padx=1)
         ttk.Label(side, text="Shapes of this camera").grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.listbox = tk.Listbox(side, height=9, activestyle="none", exportselection=False)
-        self.listbox.grid(row=9, column=0, columnspan=2, sticky="ew")
+        listf = ttk.Frame(side)
+        listf.grid(row=9, column=0, columnspan=2, sticky="ew")
+        listf.columnconfigure(0, weight=1)
+        self.listbox = tk.Listbox(listf, height=self.list_rows, activestyle="none", exportselection=False)
+        self.list_scroll = ttk.Scrollbar(listf, command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=self.list_scroll.set)
+        self.listbox.grid(row=0, column=0, sticky="ew")
+        self.list_scroll.grid(row=0, column=1, sticky="ns")
         self.listbox.bind("<<ListboxSelect>>", lambda e: self._selected())
         edit = ttk.Frame(side)
         edit.grid(row=10, column=0, columnspan=2, sticky="ew", pady=4)
@@ -378,7 +398,7 @@ class ZoneEditor:
         self._fill_list(select=len(self.shapes[self.camera]) - 1)
         self._kind_changed()
         self._redraw()
-        self.status_var.set(f"Added {KINDS[kind][0].split(':')[0].lower()} '{name}'. Draw the next one, or Save.")
+        self.status_var.set(f"Added {kind_word(kind)} '{name}'. Draw the next one, or Save.")
         return shape
 
     def _near(self, a, b) -> bool:
@@ -407,7 +427,7 @@ class ZoneEditor:
     def _fill_list(self, select: int | None = None):
         self.listbox.delete(0, "end")
         for s in self.shapes[self.camera]:
-            self.listbox.insert("end", f"{s.name}   ({KINDS[s.kind][0].split(':')[0].lower()})")
+            self.listbox.insert("end", f"{s.name}   ({kind_word(s.kind)})")
         if select is not None:
             self.listbox.selection_set(select)
         self._selected()
@@ -418,7 +438,7 @@ class ZoneEditor:
 
     def _selected(self):
         i = self.selected_index()
-        machine = i is not None and self.shapes[self.camera][i].kind in ("motion", "lamp")
+        machine = i is not None and self.shapes[self.camera][i].kind in LINKED
         stations = [s.name for s in self.shapes[self.camera] if s.kind == "station"]
         self.link_box.configure(state="readonly" if machine else "disabled", values=["(nearest station)", "(none)", *stations])
         if machine:

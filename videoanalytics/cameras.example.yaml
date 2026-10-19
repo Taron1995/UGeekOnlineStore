@@ -4,6 +4,7 @@
 # Every key is checked on start: a typo is reported, not silently ignored.
 # You do not have to type the polygons: `python -m videoanalytics zones <videos>` lets you draw areas, stations and machines on a frame
 # of each camera with the mouse and writes them in this format.
+# Machines without a signal lamp: `source: activity` (people work at the section, cam5) or `source: motion` (the machine moves by itself, cam2).
 
 options:
   fps: 3                        # analysed frames per second (the recordings can be 25 fps)
@@ -67,3 +68,13 @@ cameras:
       count: out                # in | out | both
 
   cam4: {}                      # people counting only
+
+  cam5:                         # a press fed by hand, no lamp: it works while a person has stayed at its processing section and something there moves
+    machines:
+      - name: press1
+        source: activity
+        roi: [[0.30, 0.40], [0.55, 0.40], [0.55, 0.80], [0.30, 0.80]]   # tight around where the work is done, not the whole hall
+        min_present_s: 8        # a person has to stay this long (someone walking past is not work)
+        min_overlap: 0.15       # share of the person's box (or of the section) that has to lie in the section
+        motion_thr: 0.02        # share of changed pixels in the section that counts as "something moves" (people are NOT masked out here)
+        window_s: 10
