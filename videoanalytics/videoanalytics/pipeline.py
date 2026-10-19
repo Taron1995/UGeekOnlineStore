@@ -14,6 +14,23 @@ from .video import active_intervals, fmt_ts, open_capture, save_clip  # noqa: F4
 from .zones import Motion, Zone
 
 
+def keep_in_areas(dets, areas, w: int, h: int):
+    """Only people standing in a 'watch' area (when there is one) and not in an 'ignore' area are analysed; the foot point decides, as for zones.
+    areas: [(Zone, 'watch' | 'ignore')]."""
+    if not areas:
+        return dets
+    watch = [z for z, mode in areas if mode == "watch"]
+    ignore = [z for z, mode in areas if mode == "ignore"]
+    kept = []
+    for d in dets:
+        fx, fy = (d[0] + d[2]) / 2, d[3]
+        if watch and not any(z.contains(fx, fy, w, h) for z in watch):
+            continue
+        if not any(z.contains(fx, fy, w, h) for z in ignore):
+            kept.append(d)
+    return kept
+
+
 def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None = None, limit_s: float | None = None,
                   pose=None, workpiece_detect=None):
     """src: {camera, path, rel, start_ts, duration}. detect(frame) -> [(x1,y1,x2,y2,score)] persons.
@@ -29,6 +46,7 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
     step = max(1, round(src_fps / fps_proc))
     dt = step / src_fps
     zones = [Zone(z["name"], z["polygon"], z.get("kind", "workstation"), z.get("hold_s", 5.0)) for z in cam.get("zones") or []]
+    areas = [(Zone(a["name"], a["polygon"]), a.get("mode", "watch")) for a in cam.get("areas") or []]
     ctx = Ctx(src, cam, opts, out_dir)
     st = dict(frames=0, det_frames=0, processed_s=0.0)
 
@@ -64,7 +82,7 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
             fm = motion.step(frame)
             detected = 0
             if fm > opts["gate_motion"] or tracker.tracks or t_rel - last_det >= opts["keepalive_s"]:
-                ctx.tracks = tracker.update(detect(frame))
+                ctx.tracks = tracker.update(keep_in_areas(detect(frame), areas, frame.shape[1], frame.shape[0]))
                 last_det, detected = t_rel, 1
             else:
                 ctx.tracks = []  # quiet scene and nobody tracked: skip the expensive detector

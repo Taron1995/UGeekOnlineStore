@@ -11,40 +11,21 @@ import webbrowser
 from collections import Counter
 from pathlib import Path
 
-import yaml
-
 from . import pipeline
 from .autoconfig import build_camera_config, learn_scene
-from .config import DEFAULTS, check_config, normalize_camera, read_config
+from .config import DEFAULTS, normalize_camera, read_config
 from .diagnostics import doctor_text, inspect_samples, notes, result_text
 from .paths import find_model, models_dir
 from .report import _dur, write_reports
+from .setupfile import camera_picture, setup_file, write_info, write_setup
 from .sources import VIDEO_EXT, discover, discover_auto, parse_start_arg
 from .storage import SCHEMA_VERSION, clean_stale, merge_shards, shard_glob, shard_meta, shard_path
-from .tools import MODEL_URLS, fetch_models, snapshot
+from .tools import MODEL_URLS, fetch_models
 from .video import active_intervals, fmt_ts
 
 MODEL = "yolox_tiny.onnx"
 FINGERPRINT_OPTS = ("fps", "conf", "min_hits", "iou_thr", "max_lost_s", "gate_motion", "keepalive_s", "clips", "max_clips_per_file",
                     "clip_pad_s", "active_hours")
-AUTO_HEADER = """# Learned automatically from your footage (stations = where people stay, machines = persistent motion, lamps = switching
-# coloured lights). It is a starting point, not the truth: open the snapshots in the 'setup' folder, correct what is wrong
-# (delete a wrong zone / machine, move a polygon), save this file and run the same command again - it is used as it is.
-# Coordinates are 0..1 (x left -> right, y top -> bottom). Add a work schedule to get absences, e.g.:
-#   schedule: {work: [["08:00", "12:00"], ["13:00", "17:00"]], breaks: [["10:00", "10:15"]], days: [1, 2, 3, 4, 5]}
-"""
-
-
-class _FlowLists(yaml.SafeDumper):
-    """Polygons and points on one line ([[0.52, 0.25], ...]) so the file can be edited by hand."""
-
-
-def _list(dumper, data):
-    flat = all(isinstance(x, (int, float)) for x in data) or all(isinstance(x, list) and all(isinstance(y, (int, float)) for y in x) for x in data)
-    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=bool(data) and flat)
-
-
-_FlowLists.add_representer(list, _list)
 
 
 # ---- inputs -------------------------------------------------------------------------------------------------------------
@@ -276,19 +257,15 @@ def learn_cameras(srcs, match, opts, out: Path, model, workers, minutes: float, 
         cfg = r["cfg"] if r["ok"] else build_camera_config([], [], [])
         cameras[cam] = {"match": match[cam]["match"], **cfg}
         if r["ok"]:
-            try:
-                snapshot(r["preview"][0], out / "setup" / f"{cam}.jpg", cfg, r["preview"][1])
-                setup[cam] = {**r["info"], "image": f"setup/{cam}.jpg"}
-            except OSError:
-                setup[cam] = dict(r["info"])
+            picture = camera_picture(out, cam, r["preview"][0], r["preview"][1], cfg)
+            setup[cam] = {**r["info"], **({"image": picture} if picture else {})}
     options = {"fps": opts["fps"], "conf": opts["conf"], "clips": opts["clips"]}
     if opts["active_hours"]:
         options["active_hours"] = opts["active_hours"]
     cfg_all = {"options": options, "cameras": cameras}
-    check_config(cfg_all)
-    (out / "cameras.auto.yaml").write_text(AUTO_HEADER + yaml.dump(cfg_all, Dumper=_FlowLists, sort_keys=False, allow_unicode=True, width=150), encoding="utf-8")
-    (out / "setup" / "setup.json").write_text(json.dumps(setup, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"Setup written to {out / 'cameras.auto.yaml'} (edit it and run again to correct anything)", flush=True)
+    path = write_setup(setup_file(out), cfg_all)
+    write_info(out, setup)
+    print(f"Setup written to {path} (edit it, or draw the zones by hand with  python -m videoanalytics zones ..., and run again to correct anything)", flush=True)
     return cfg_all
 
 
@@ -338,7 +315,7 @@ def analyze(paths, *, out=None, config=None, model=None, workers=None, open_repo
                                        gate_motion=-1.0 if no_gate else None).items() if v is not None}
     chunk_s = chunk_min * 60.0
 
-    auto_yaml = out / "cameras.auto.yaml"
+    auto_yaml = setup_file(out)
     cfg_path = config or (auto_yaml if auto_yaml.exists() and not rediscover else None)
     if cfg_path:
         cfg = read_config(cfg_path)

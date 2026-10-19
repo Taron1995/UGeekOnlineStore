@@ -17,6 +17,7 @@ STEP = "analyze"  # analyze = everything in one step (just set VIDEOS); doctor =
 
 COMMON = ["--config", CONFIG, "--videos", VIDEOS]
 STEPS = {
+    "zones": ["zones", VIDEOS],  # a window: draw where to follow people, the stations and the machines on a frame of each camera (then STEP = "analyze")
     "doctor": ["doctor", VIDEOS],  # 10-60 s check of the recordings; prints a text (and saves doctor.txt) to read or to send if something is wrong
     "analyze": ["analyze", VIDEOS],  # learns the scene by itself, analyses, opens the report (results: <folder>/_analysis)
     "gui": ["gui", VIDEOS],  # the same in a window

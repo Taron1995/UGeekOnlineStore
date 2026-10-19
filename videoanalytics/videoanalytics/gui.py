@@ -119,10 +119,10 @@ def open_report(path: str):
 
 
 class App:
-    def __init__(self, root, paths=(), *, build=build_command, show_report=open_report, show_folder=open_path):
+    def __init__(self, root, paths=(), *, build=build_command, show_report=open_report, show_folder=open_path, zones=None):
         if tk is None:
             raise RuntimeError(NEEDS_TK)
-        self.root, self.build, self.show_report, self.show_folder = root, build, show_report, show_folder
+        self.root, self.build, self.show_report, self.show_folder, self.zones = root, build, show_report, show_folder, zones
         self.paths: list[str] = []
         self.job: Job | None = None
         self.report: str | None = None  # the finished report
@@ -174,15 +174,17 @@ class App:
 
         run = ttk.Frame(f)
         run.grid(row=4, column=0, sticky="ew")
-        run.columnconfigure(3, weight=1)
+        run.columnconfigure(4, weight=1)
         self.start_btn = ttk.Button(run, text="Start", command=self.start)
         self.start_btn.grid(row=0, column=0)
         self.check_btn = ttk.Button(run, text="Check the videos first", command=self.check)
         self.check_btn.grid(row=0, column=1, padx=6)
+        self.zones_btn = ttk.Button(run, text="Mark zones by hand…", command=self.mark_zones)
+        self.zones_btn.grid(row=0, column=2)
         self.stop_btn = ttk.Button(run, text="Stop", command=self.stop, state="disabled")
-        self.stop_btn.grid(row=0, column=2)
+        self.stop_btn.grid(row=0, column=3, padx=6)
         self.bar = ttk.Progressbar(run, maximum=100)
-        self.bar.grid(row=0, column=3, sticky="ew", padx=6)
+        self.bar.grid(row=0, column=4, sticky="ew", padx=6)
         self.status = ttk.Label(f, textvariable=self.status_var, wraplength=720, justify="left")
         self.status.grid(row=5, column=0, sticky="nw", pady=(6, 0))
         f.rowconfigure(5, minsize=44)  # room for two lines, so the log below does not jump
@@ -246,6 +248,29 @@ class App:
         """The quick check of the recordings (what the program sees in them, how fast this computer is): a text to copy and send."""
         self._launch(doctor=True)
 
+    def mark_zones(self):
+        """Opens the zone editor on the chosen videos (same cameras and setup file as the analysis would use)."""
+        if self.job is not None:
+            return
+        if not self.paths:
+            messagebox.showinfo("Video analytics", "Add at least one video file or folder first.")
+            return
+        start = self.start_var.get().strip()
+        try:
+            if start:
+                parse_start_arg(start)
+            editor = self.zones
+            if editor is None:
+                from .zoneeditor import edit_zones as editor
+            editor(self.root, self.paths, out=self.out_var.get().strip() or None, start=start or None, one_camera="" if self.one_var.get() else None,
+                   on_saved=self._zones_saved)
+        except (SystemExit, ValueError) as e:  # no readable video, an unreadable start time
+            messagebox.showerror("Video analytics", str(e))
+
+    def _zones_saved(self, path):
+        self._append(f"Zones saved: {path}")
+        self._status("The zones are saved. Press Start: the cameras whose zones changed are analysed again, the others are reused.")
+
     def _launch(self, doctor: bool):
         if self.job is not None:
             return
@@ -274,7 +299,7 @@ class App:
             return
         self.bar.configure(mode="indeterminate")  # no way to tell how long it takes yet
         self.bar.start(15)
-        for btn in (self.start_btn, self.check_btn, self.report_btn, self.folder_btn):
+        for btn in (self.start_btn, self.check_btn, self.zones_btn, self.report_btn, self.folder_btn):
             btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self._status("Checking the recordings …" if doctor else "Working … the first minutes go to learning the scene.")
@@ -320,6 +345,7 @@ class App:
         self._determinate()
         self.start_btn.configure(state="normal")
         self.check_btn.configure(state="normal")
+        self.zones_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         ready = self.report is not None and Path(self.report).is_file()
         if self.stopping:

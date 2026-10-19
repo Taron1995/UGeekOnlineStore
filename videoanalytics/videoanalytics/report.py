@@ -11,6 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .autoconfig import build_camera_config
 from .config import normalize_camera
 from .metrics import absence_stats, idle_runs
 from .schedule import Schedule
@@ -317,21 +318,61 @@ def _timelines(cam: str, grid: _Grid, ppl, zones, machines, zone_kind: dict, csv
     return out
 
 
-def _setup_section(setup: dict) -> str:
-    """What the automatic setup found, with the overlay image per camera, so it can be checked at a glance."""
-    if not setup:
+def _same_polygon(a, b) -> bool:
+    return len(a) == len(b) and all(abs(p[0] - q[0]) < 1e-3 and abs(p[1] - q[1]) < 1e-3 for p, q in zip(a, b))
+
+
+def _setup_items(cam_cfg: dict, info: dict):
+    """The list of what the camera's setup contains, with what the scene learning saw for the items that are still as it found them.
+    Returns (html items, items matching the learning, items drawn or changed by hand, learned items that were removed)."""
+    cam_cfg = normalize_camera(cam_cfg)
+    spots, lamps, motion = info.get("spots", []), info.get("lamps", []), info.get("motion", [])
+    esc = html.escape
+    hand = " <span class=tag>(drawn by hand)</span>"
+    found = lambda learned, poly: next((m for m in learned if _same_polygon(m.get("polygon", []), poly)), None)
+    items, matched = [], []
+    for a in cam_cfg.get("areas") or []:
+        watch = a.get("mode", "watch") == "watch"
+        items.append(f"{'tracking area' if watch else 'ignored area'} <b>{esc(a['name'])}</b>: people are "
+                     f"{'followed only in here' if watch else 'not analysed in here'}{hand}")
+    for z in cam_cfg.get("zones") or []:
+        kind = z.get("kind", "workstation")
+        label = "station" if kind == "workstation" else f"{esc(kind)} zone"
+        m = found(spots, z["polygon"])
+        matched += [m] if m else []
+        items.append(f"{label} <b>{esc(z['name'])}</b>" + (f": people stood here for {_dur(m['total_s'])} in total (sampled footage)" if m else hand))
+    for mc in cam_cfg["machines"]:
+        lamp = mc["source"] == "lamp"
+        m = found(lamps if lamp else motion, mc["roi"])
+        matched += [m] if m else []
+        detail = (f"colours seen {esc(', '.join(m['colours']))}" if lamp else f"moving in {100 * m['freq']:.0f}% of the frames") if m else ""
+        link = f" (linked to {esc(mc['zone'])})" if mc.get("zone") else ""
+        items.append(f"{'signal lamp' if lamp else 'moving machine zone'} <b>{esc(mc['name'])}</b>{link}" + (f": {detail}" if m else hand))
+    by_hand = sum(1 for x in items if "drawn by hand" in x)
+    return items, len(matched), by_hand, len(spots) + len(lamps) + len(motion) - len(matched)
+
+
+def _setup_section(setup: dict, cfg: dict | None = None) -> str:
+    """The setup the analysis used (learned automatically and / or drawn by hand), with the picture of every camera, so it can be checked at a glance."""
+    cams = {k: normalize_camera(v) for k, v in ((cfg or {}).get("cameras") or {}).items()}
+    names = sorted(set(cams) | set(setup))
+    if not names:
         return ""
-    figs = []
-    for cam, info in sorted(setup.items()):
-        items = [f"station <b>spot{i}</b>: people stood here for {_dur(s['total_s'])} in total (sampled footage)" for i, s in enumerate(info.get("spots", []), 1)]
-        items += [f"signal lamp <b>lamp{i}</b>: colours seen {html.escape(', '.join(m['colours']))}" for i, m in enumerate(info.get("lamps", []), 1)]
-        items += [f"moving machine zone <b>motion{i}</b>: moving in {100 * m['freq']:.0f}% of the frames" for i, m in enumerate(info.get("motion", []), 1)]
-        ul = "<ul>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>" if items else "<p class=note>Nothing found: people counting only.</p>"
-        img = f'<img loading="lazy" src="{html.escape(info["image"], quote=True)}" alt="learned setup of {html.escape(cam, quote=True)}">' if info.get("image") else ""
-        figs.append(f"<figure>{img}<figcaption><b>{html.escape(cam)}</b> · learned from {info.get('sampled_s', 0)} s of footage{ul}</figcaption></figure>")
-    return ("<section><h2>Learned setup <span class='tag'>automatic - please check</span></h2>"
-            "<p class=sub>Green = stations (where people stayed), orange = machines (a moving part, or a lamp). This is a best guess made from the footage itself: "
-            "if something is wrong or missing, edit <code>cameras.auto.yaml</code> in the results folder (delete or move a zone, add a "
+    figs, learned_any, hand_any = [], False, False
+    for cam in names:
+        info = setup.get(cam, {})
+        cam_cfg = cams.get(cam) or build_camera_config(info.get("spots", []), info.get("motion", []), info.get("lamps", []))
+        items, matched, by_hand, removed = _setup_items(cam_cfg, info)
+        learned_any, hand_any = learned_any or matched > 0, hand_any or by_hand > 0 or removed > 0
+        ul = "<ul>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>" if items else "<p class=note>Nothing set: people counting only.</p>"
+        how = (f"learned from {info.get('sampled_s', 0)} s of footage" + (", then changed by hand" if by_hand or removed else "")) if matched else "drawn by hand"
+        img = f'<img loading="lazy" src="{html.escape(info["image"], quote=True)}" alt="setup of {html.escape(cam, quote=True)}">' if info.get("image") else ""
+        figs.append(f"<figure>{img}<figcaption><b>{html.escape(cam)}</b> · {how}{ul}</figcaption></figure>")
+    tag = "learned automatically and / or drawn by hand - please check" if hand_any else "automatic - please check"
+    return (f"<section><h2>{'Learned setup' if learned_any else 'Setup'} <span class='tag'>{tag}</span></h2>"
+            "<p class=sub>Green = stations (where people work), orange = machines (a moving part, or a lamp), blue = where people are followed, red = ignored. "
+            "This is a best guess made from the footage itself, or what you drew: if something is wrong or missing, draw it with "
+            "<code>python -m videoanalytics zones</code> on the same videos (or edit <code>cameras.auto.yaml</code> in the results folder: delete or move a zone, add a "
             "<code>schedule</code>) and run the same command again.</p>"
             f"<div class='setupgrid'>{''.join(figs)}</div></section>")
 
@@ -561,7 +602,7 @@ def write_reports(out_dir: Path, idle_min_s: float = 300.0, cfg: dict | None = N
                 w.writerow(header)
                 w.writerows(rows)
     (out_dir / "machines_minutely.csv").unlink(missing_ok=True)  # written by earlier versions
-    parts.insert(1, _setup_section(setup))  # right after the cameras overview: this is what the reader should verify first
+    parts.insert(1, _setup_section(setup, cfg))  # right after the cameras overview: this is what the reader should verify first
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Video analytics report</title><style>{CSS}</style></head>
 <body><main><h1>Video analytics report</h1>

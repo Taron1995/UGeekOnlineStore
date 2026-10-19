@@ -222,6 +222,15 @@ def _centre(poly):
     return a.mean(axis=0)
 
 
+def nearest_station(roi, stations, link_dist: float = 0.3):
+    """Name of the station a machine belongs to, or None. stations: [(name, polygon)]. The machine sits above the operator's feet, so the
+    vertical distance of the centres counts half."""
+    if not stations:
+        return None
+    d = [float(np.hypot(*((_centre(roi) - _centre(poly)) * [1.0, 0.5]))) for _, poly in stations]
+    return stations[int(np.argmin(d))][0] if min(d) <= link_dist else None
+
+
 def build_camera_config(spots, motion, lamps, link_dist: float = 0.3) -> dict:
     """Camera config from what was found. Machines are linked to the nearest station zone (so the report can show work
     without an operator). People counting, gatherings and inactivity are always on, with conservative durations."""
@@ -229,11 +238,8 @@ def build_camera_config(spots, motion, lamps, link_dist: float = 0.3) -> dict:
     machines = [{"name": f"lamp{i + 1}", "source": "lamp", "roi": m["polygon"], "work_colors": ["green"]} for i, m in enumerate(lamps)]
     machines += [{"name": f"motion{i + 1}", "source": "motion", "roi": m["polygon"], "motion_thr": 0.02, "window_s": 10} for i, m in enumerate(motion)]
     for m in machines:
-        if spots:
-            # the machine sits above the operator's feet, so vertical distance counts half
-            d = [float(np.hypot(*((_centre(m["roi"]) - _centre(s["polygon"])) * [1.0, 0.5]))) for s in spots]
-            if min(d) <= link_dist:
-                m["zone"] = f"spot{int(np.argmin(d)) + 1}"
+        if (link := nearest_station(m["roi"], [(z["name"], z["polygon"]) for z in cam["zones"]], link_dist)):
+            m["zone"] = link
     cam["machines"] = machines
     cam["gathering"] = {"min_people": 2, "min_duration_s": 180}
     cam["inactivity"] = {"method": "motion", "min_duration_s": 300}

@@ -2,6 +2,8 @@
 # `python -m videoanalytics snap ...` writes one snapshot per camera with a 10 % grid, so you can read the numbers off.
 # Camera names must appear as a whole word in the file path (cam1_2026....mp4, /cam1/).
 # Every key is checked on start: a typo is reported, not silently ignored.
+# You do not have to type the polygons: `python -m videoanalytics zones <videos>` lets you draw areas, stations and machines on a frame
+# of each camera with the mouse and writes them in this format.
 
 options:
   fps: 3                        # analysed frames per second (the recordings can be 25 fps)
@@ -21,6 +23,9 @@ schedule:
 
 cameras:
   cam1:                         # machine hall: lathe with a signal lamp (green / yellow / red)
+    areas:                      # where people are followed: only the machine hall floor; the window onto the street is ignored
+      - {name: hall_floor, mode: watch, polygon: [[0.02, 0.20], [0.98, 0.20], [0.98, 0.98], [0.02, 0.98]]}
+      - {name: street_window, mode: ignore, polygon: [[0.62, 0.02], [0.98, 0.02], [0.98, 0.18], [0.62, 0.18]]}
     zones:
       - {name: lathe1_area, kind: workstation, polygon: [[0.10, 0.30], [0.55, 0.30], [0.55, 0.95], [0.10, 0.95]]}
       - {name: rest_corner, kind: rest, polygon: [[0.70, 0.55], [0.98, 0.55], [0.98, 0.98], [0.70, 0.98]]}

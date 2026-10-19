@@ -347,6 +347,18 @@ def doctor_text(srcs: list[dict], issues: dict, *, paths=(), samples: list[dict]
 def result_text(out_dir: Path) -> str:
     """After the analysis: what the learned setup contains and what came out (counts only)."""
     lines = ["", "== Result"]
+    used = out_dir / "cameras.auto.yaml"
+    if used.exists():  # what the analysis really used: learned, drawn by hand, or both
+        try:
+            import yaml
+            for cam, c in sorted((yaml.safe_load(used.read_text(encoding="utf-8")) or {}).get("cameras", {}).items()):
+                zones, machines = (c or {}).get("zones") or [], (c or {}).get("machines") or []
+                lines.append(f"  {cam}: setup used: {sum(1 for z in zones if z.get('kind', 'workstation') == 'workstation')} station(s), "
+                             f"{sum(1 for z in zones if z.get('kind', 'workstation') != 'workstation')} other zone(s), "
+                             f"{sum(1 for m in machines if m.get('source', 'motion') == 'motion')} moving machine zone(s), "
+                             f"{sum(1 for m in machines if m.get('source') == 'lamp')} signal lamp(s), {len((c or {}).get('areas') or [])} tracking area(s)")
+        except Exception:  # noqa: BLE001 - a hand-edited file may be broken; the analysis already refused it if so
+            lines.append("  setup used: (cameras.auto.yaml could not be read)")
     setup = out_dir / "setup" / "setup.json"
     if setup.exists():
         import json

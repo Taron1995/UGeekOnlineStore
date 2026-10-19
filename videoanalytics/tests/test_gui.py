@@ -234,3 +234,44 @@ def test_the_log_can_be_copied(root):
     assert wait(root, lambda: app.job is None)
     app.copy_log()
     assert root.clipboard_get() == "line one\nline two\n"
+
+
+def test_mark_zones_opens_the_editor_with_the_chosen_options(root):
+    calls = []
+    app = gui.App(root, zones=lambda parent, paths, **kw: calls.append((parent, paths, kw)))
+    app.add_paths(["clip.mp4"])
+    app.out_var.set("/tmp/results")
+    app.one_var.set(True)
+    app.start_var.set(" 2026-10-01 08:30 ")
+    app.mark_zones()
+    (parent, paths, kw), = calls
+    assert parent is root and paths == [os.path.abspath("clip.mp4")]
+    assert kw["out"] == "/tmp/results" and kw["start"] == "2026-10-01 08:30" and kw["one_camera"] == "" and callable(kw["on_saved"])
+    kw["on_saved"]("/tmp/results/cameras.auto.yaml")
+    assert "zones are saved" in app.status_var.get() and "Zones saved: /tmp/results/cameras.auto.yaml" in app.log.get("1.0", "end")
+
+
+def test_mark_zones_needs_input_and_reports_problems(root, monkeypatch):
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: shown.append(("info", a[1])))
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: shown.append(("error", a[1])))
+
+    def refuses(parent, paths, **kw):
+        raise SystemExit("no video files in /x")
+
+    app = gui.App(root, zones=refuses)
+    app.mark_zones()  # nothing chosen
+    app.add_paths(["clip.mp4"])
+    app.mark_zones()  # the editor cannot open: the reason is shown, not lost
+    app.start_var.set("tomorrow")
+    app.mark_zones()  # an unreadable start time is refused before the editor opens
+    assert shown[0][0] == "info" and shown[1] == ("error", "no video files in /x") and shown[2][0] == "error" and "start time" in shown[2][1]
+
+
+def test_the_zone_button_waits_while_something_runs(root):
+    app, _ = window(root, "import time; time.sleep(30)")
+    app.start()
+    assert str(app.zones_btn.cget("state")) == "disabled"
+    app.stop()
+    wait(root, lambda: app.job is None, 10)
+    assert str(app.zones_btn.cget("state")) == "normal"

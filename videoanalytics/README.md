@@ -32,7 +32,7 @@ Python 3.10+. MediaPipe ships wheels for Windows (x64/ARM), Linux and macOS-ARM.
 The window (`gui`) uses tkinter, which the normal Python installers for Windows and macOS include (Linux: `sudo apt install python3-tk`).
 
 **PyCharm:** open the `videoanalytics` folder (the one with `pyproject.toml`) as the project, create a virtualenv, run the `pip install` line above in
-the PyCharm terminal, then open `run_pipeline.py`, set `VIDEOS` to your video or folder (`STEP` is already `"analyze"`) and press Run.
+the PyCharm terminal, then open `run_pipeline.py`, set `VIDEOS` to your video or folder (`STEP` is already `"analyze"`; also `"doctor"`, `"zones"`, `"gui"`) and press Run.
 Or open `run_gui.pyw` and press Run for the window. From a terminal everything is `python -m videoanalytics <command> --help`.
 
 ## Quick start - give it a video, get the report
@@ -63,9 +63,33 @@ No camera config is needed. The program does this by itself:
 
 **Check the "Learned setup" block at the top of the report first.** It draws what was found on a frame of every camera. It is a best guess made from the
 footage, not the truth: a person who simply stands somewhere (a guard at the gate) becomes a "station", a waving banner can look like a "machine", a
-machine that never ran in the sampled minutes is not found. To correct it, open `<results>/cameras.auto.yaml`, delete or move a wrong zone or machine,
-add a work `schedule` (absences need one) and run the same command again. The file is used as it is and never overwritten (`--rediscover` learns again);
-only the cameras whose setup changed are computed again.
+machine that never ran in the sampled minutes is not found. To correct it, **draw the zones yourself** (next section), or open `<results>/cameras.auto.yaml`,
+delete or move a wrong zone or machine, add a work `schedule` (absences need one) and run the same command again. The file is used as it is and never
+overwritten without a copy (`--rediscover` learns again and keeps the previous file as `cameras.auto.yaml.bak`); only the cameras whose setup changed are
+computed again.
+
+### Marking the zones by hand: where to follow, stations, machines
+
+```
+python -m videoanalytics zones D:\footage        # the same paths as for analyze; in the window: "Mark zones by hand…"; in PyCharm: STEP = "zones"
+```
+A window shows a frame of a camera (choose the camera, the recording and the moment at the top right). Pick what to draw, click the corners of the shape, finish it with a
+double-click or Enter (right-click / Backspace removes the last corner, Esc cancels), and **Save**:
+
+| Draw | Meaning | Config |
+|---|---|---|
+| Tracking area (blue) | people are followed **only** where this area is - the rest of the picture (a street behind the window, a neighbouring hall) is not analysed | `areas`, `mode: watch` |
+| Ignored area (red) | nobody standing here is analysed (a TV, a poster with people, a mirror) | `areas`, `mode: ignore` |
+| Station (green) | a person works here: time at the station, absences | `zones`, `kind: workstation` |
+| Rest or common zone | a rest corner: time spent there, never an "absence" | `zones`, `kind: rest` |
+| Machine: the moving part (orange) | work / idle from motion in this spot (people masked out) | `machines`, `source: motion` |
+| Machine: signal lamp (magenta) | work / idle from the lamp colour (draw it tight around the lamp) | `machines`, `source: lamp` |
+
+A machine belongs to the nearest station (so the report can show work without an operator); change it in "Machine belongs to". The shapes are saved into
+`<results>/cameras.auto.yaml` - the setup `analyze` uses - and a picture of the camera with the shapes drawn in goes to `setup/`; the file that was there is kept as `.bak`.
+Start with an analysis run, then correct what the program learned: the window opens with those shapes, which can be deleted and redrawn. Without an earlier run the
+window starts empty and creates the setup for all cameras (cameras you do not draw on get people counting only, as in the learned setup of a camera where nothing was found).
+After saving, run the analysis again: **only the cameras whose zones changed are computed again.** The foot point of a person decides whether they are inside an area or a zone.
 
 Other options: `--config cameras.yaml` (your own file, see below), `--no-auto` (people counting only), `--workers N`, `--fps`, `--hours`, `--time-regex`
 (unusual file names), `--no-open`; `python -m videoanalytics analyze --help`.
@@ -129,6 +153,8 @@ unreadable files). **Run it first.**
 `cameras.example.yaml` shows all features with comments. Coordinates are normalised (x, y in 0..1); `snap` draws a 10 % grid. **Every key is
 validated on start** (unknown keys, polygons given in pixels, a machine linked to a zone that does not exist, ...) and reported together.
 
+* `areas`: `{name, polygon, mode}`, `mode: watch` (default) or `ignore`. If there is a `watch` area, only people whose feet are inside one are analysed (counted, tracked, in zones,
+  gatherings, inactivity); people whose feet are inside an `ignore` area never are. Machine ROIs do not depend on areas. Normally drawn with `zones`, see above.
 * `zones`: `kind: workstation` (default; expected to be staffed, excluded from gatherings) or any other kind such as `rest`. `hold_s` (default 5)
   keeps a zone "occupied" this long after the last detection.
 * `schedule` (global, per camera or per zone): `work` and `breaks` as `["HH:MM", "HH:MM"]` pairs (overnight ranges work), `days` (Monday = 1).
@@ -182,7 +208,7 @@ equals the part count if one cycle makes one part.
 | File | Content |
 |---|---|
 | `report.html` | cameras overview; the learned setup drawn on a frame of every camera; stations (at the station / expected / absent); machines (working %, red lamp, cycles, work without operator); per camera a timeline (recordings up to 12 h: people, station occupancy, machine working share, 5 s to 5 min per point) and hour x day heatmaps (recordings over 3 h: people, station occupancy, machine working %, cycles); longest idle periods, absences, gatherings, people without movement - with frame and clip |
-| `cameras.auto.yaml`, `setup/` | the learned setup (editable, used again on the next run) and its snapshots with the zones drawn in |
+| `cameras.auto.yaml`, `setup/` | the setup used (learned and / or drawn by hand; editable, used again on the next run; the previous one is kept as `.bak`) and its pictures with the zones drawn in |
 | `timeline.csv`, `stations_timeline.csv`, `machines_timeline.csv` | the 5-second values behind the timelines (only for recordings up to 12 h) |
 | `hourly.csv` | camera, date, hour, analysed minutes, avg/peak people, appearances, line in/out, gatherings, inactive people, workpieces |
 | `machines_hourly.csv` | camera, machine, date, hour, work / idle / alarm / wait minutes, cycles, work attended by the operator |
@@ -218,6 +244,9 @@ Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`
 * Lamp colours (green/yellow/red, blinking), motion machine, cycles, gatherings, occupancy, schedule/absence, idle runs, report numbers: unit tests with
   mutation checks (the tests fail when the logic is broken on purpose).
 * Gatherings on real footage: groups outside the work zone are found and the evidence frame shows them.
+* Zone editor (logic tests with mutation checks; the window driven with synthetic mouse and keyboard events on a virtual display): shapes <-> config keep every other setting, machines
+  find their station again when theirs is deleted, a setup the analysis would refuse is not written. On the real pedestrian clip, a tracking area over the left half changed the
+  average number of people in view from 5.78 to 2.03 and only that camera was computed again.
 * Camera codecs and containers, made with ffmpeg from the real pedestrian clip and run through `doctor` and `analyze` without errors: H.264 in MP4 (also 25 fps with a
   250-frame key interval, and 1080p), in MKV, in MPEG-TS and fragmented MP4; H.265 / HEVC; a raw `.h264` stream (no length, no frame rate: flagged, read once).
   OpenCV's FFmpeg messages about not-yet-decodable frames are switched off.
@@ -230,7 +259,7 @@ Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`
 
 **Not verified:** anything on your cameras (night/IR, occlusion, crowds, lamp overexposure); machine WORK/IDLE against real machines (it is a motion /
 lamp proxy, not a machine signal); the pose backend on large people; real workpiece accuracy; `--hw-decode`; Windows (nothing here ran on Windows,
-including `analyze_video.bat` and the window under Windows). **The automatic setup has not been tried on footage from a real workshop** - how many
+including `analyze_video.bat`, the window and the zone editor under Windows; the editor was not tried on a high-resolution or macOS screen). **The automatic setup has not been tried on footage from a real workshop** - how many
 false stations / machines it finds and how many real ones it misses there is unknown until you look at the "Learned setup" block of your first run.
 Measure on a hand-counted sample hour before quoting numbers.
 

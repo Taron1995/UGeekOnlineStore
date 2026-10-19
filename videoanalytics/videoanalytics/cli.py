@@ -1,4 +1,4 @@
-"""python -m videoanalytics analyze | gui | doctor | scan | snap | run | report | models | frames | split-coco | train | probe  -  see README.md"""
+"""python -m videoanalytics analyze | gui | doctor | zones | scan | snap | run | report | models | frames | split-coco | train | probe  -  see README.md"""
 from __future__ import annotations
 
 import argparse
@@ -127,6 +127,11 @@ def cmd_analyze(a):
 def cmd_doctor(a):
     doctor(a.paths, out=a.out, model=a.model, workers=a.workers, hours=parse_hours(a.hours) if a.hours else None, time_regex=a.time_regex,
            start=a.start, one_camera=one_camera_of(a), bench=not a.no_bench)
+
+
+def cmd_zones(a):
+    from .zoneeditor import main as zones_main
+    zones_main(a.paths, out=a.out, config=a.config, time_regex=a.time_regex, start=a.start, one_camera=one_camera_of(a), camera=a.camera)
 
 
 def cmd_gui(a):
@@ -287,6 +292,15 @@ def main(argv=None):
     names(p)
     tuning(p)
     p.set_defaults(f=cmd_analyze)
+
+    p = sub.add_parser("zones", help="DRAW the zones with the mouse: where to follow people, the stations and the machines, on a frame of each camera")
+    p.add_argument("paths", nargs="+", help="the same video file(s) and/or folder(s) you give to analyze")
+    p.add_argument("--out", help="results folder (default: where analyze puts its results); the setup is <out>/cameras.auto.yaml")
+    p.add_argument("--config", help="edit this cameras.yaml instead (comments are lost when it is saved; the old file is kept as .bak)")
+    p.add_argument("--camera", help="open on this camera")
+    p.add_argument("--time-regex", help="regex with 6 groups (Y,m,d,H,M,S) if file names are unusual")
+    names(p)
+    p.set_defaults(f=cmd_zones)
 
     p = sub.add_parser("doctor", help="CHECK FIRST: reads your recordings, looks at a few closely, measures the speed, prints one text to send if something is wrong")
     p.add_argument("paths", nargs="+", help="video file(s) and/or folder(s)")

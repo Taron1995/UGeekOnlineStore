@@ -88,6 +88,9 @@ def snapshot(video: str, out_path: Path, cam_cfg: dict, at_s: float = 30.0):
         cv2.arrowedLine(f, a, b, color, 2, tipLength=0.05)
         cv2.putText(f, ln.get("name", "line"), a, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
+    for a in cam_cfg.get("areas") or []:  # where people are followed (blue) / ignored (red)
+        watch = a.get("mode", "watch") == "watch"
+        poly(a["polygon"], (255, 140, 0) if watch else (60, 60, 255), f"{'follow' if watch else 'ignore'}: {a['name']}")
     for z in cam_cfg.get("zones") or []:
         poly(z["polygon"], (0, 200, 0) if z.get("kind", "workstation") == "workstation" else (200, 200, 0), f"{z['name']} ({z.get('kind', 'workstation')})")
     for m in cam_cfg["machines"]:

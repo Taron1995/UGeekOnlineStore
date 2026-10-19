@@ -12,8 +12,10 @@ DEFAULTS = dict(fps=3.0, conf=0.35, min_hits=2, iou_thr=0.2, max_lost_s=2.0, gat
                 clips=True, max_clips_per_file=10, clip_pad_s=5.0, active_hours=None, hw_decode=False)
 
 ROOT = {"options", "schedule", "cameras"}
-CAMERA = {"match", "fps", "zones", "lines", "machine", "machines", "gathering", "inactivity", "workpieces", "schedule"}
+CAMERA = {"match", "fps", "zones", "areas", "lines", "machine", "machines", "gathering", "inactivity", "workpieces", "schedule"}
 ZONE = {"name", "polygon", "kind", "hold_s", "schedule"}
+AREA = {"name", "polygon", "mode"}
+AREA_MODES = ("watch", "ignore")
 LINE = {"name", "p1", "p2", "margin"}
 MACHINE = {"name", "source", "roi", "polygon", "zone", "motion_thr", "window_s", "on_frac", "off_frac", "sat_min",
            "val_min", "min_frac", "work_colors", "hues", "cycle"}
@@ -116,6 +118,19 @@ def check_config(cfg: dict) -> None:
             znames.append(z.get("name"))
             if (p := _poly_problem(z.get("polygon"))):
                 errs.append(f"{zw}.polygon: {p}")
+        anames = []
+        for i, a in enumerate(cam.get("areas") or []):
+            aw = f"{w}.areas[{i}]"
+            unknown(aw, a, AREA)
+            if not a.get("name"):
+                errs.append(f"{aw}: 'name' is required")
+            if a.get("name") in anames:
+                errs.append(f"{aw}: duplicate area name '{a.get('name')}'")
+            anames.append(a.get("name"))
+            if a.get("mode", "watch") not in AREA_MODES:
+                errs.append(f"{aw}.mode: '{a.get('mode')}' must be one of {list(AREA_MODES)}")
+            if (p := _poly_problem(a.get("polygon"))):
+                errs.append(f"{aw}.polygon: {p}")
         for i, ln in enumerate(cam.get("lines") or []):
             lw = f"{w}.lines[{i}]"
             unknown(lw, ln, LINE)

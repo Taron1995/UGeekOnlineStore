@@ -4,7 +4,8 @@ from datetime import datetime
 
 import pytest
 
-from videoanalytics.report import TL_MAX_S, _dur, _Grid, write_reports
+from videoanalytics.autoconfig import build_camera_config
+from videoanalytics.report import TL_MAX_S, _dur, _Grid, _setup_section, write_reports
 from videoanalytics.sources import naive_epoch
 from videoanalytics.storage import FINE_S, merge_shards, write_shard
 
@@ -182,3 +183,49 @@ def test_grid_step_follows_the_span():
 
 def test_durations_use_a_sensible_unit():
     assert [_dur(s) for s in (0, 45, 80, 100, 600, 3000, 5400, 12600, 86400)] == ["0 s", "45 s", "80 s", "1.7 min", "10 min", "50 min", "1.5 h", "3.5 h", "24.0 h"]
+
+
+# ---- the setup block --------------------------------------------------------------------------------------------------------
+SQUARE = lambda x, y, s=0.2: [[x, y], [x + s, y], [x + s, y + s], [x, y + s]]
+LEARNED = dict(sampled_s=70, spots=[dict(total_s=164.0, polygon=SQUARE(0.1, 0.1)), dict(total_s=40.0, polygon=SQUARE(0.5, 0.5))],
+               motion=[dict(freq=0.62, polygon=SQUARE(0.7, 0.1))], lamps=[dict(colours=["green", "red"], polygon=SQUARE(0.8, 0.8, 0.05))], image="setup/cam1.jpg")
+
+
+def test_setup_block_of_a_pure_learning_result():
+    block = _setup_section({"cam1": LEARNED})  # no config: rebuilt from what was learned
+    assert "<h2>Learned setup <span class='tag'>automatic - please check</span></h2>" in block
+    assert "station <b>spot1</b>: people stood here for 2.7 min in total" in block and "colours seen green, red" in block and "moving in 62% of the frames" in block
+    assert "drawn by hand" not in block.split("<ul>")[1] and "learned from 70 s of footage</figcaption>" not in block  # the caption closes with the list
+    assert 'src="setup/cam1.jpg"' in block and "python -m videoanalytics zones" in block
+
+
+def test_setup_block_of_zones_drawn_by_hand_only():
+    cfg = dict(cameras=dict(cam1=dict(zones=[dict(name="press", polygon=SQUARE(0.1, 0.1), kind="workstation"), dict(name="break", polygon=SQUARE(0.5, 0.5), kind="rest")],
+                                      machines=[dict(name="m1", source="motion", roi=SQUARE(0.7, 0.1), zone="press")],
+                                      areas=[dict(name="floor", polygon=SQUARE(0, 0, 1), mode="watch"), dict(name="tv", polygon=SQUARE(0.8, 0.8, 0.1), mode="ignore")])))
+    block = _setup_section({}, cfg)
+    assert "<h2>Setup <span class='tag'>learned automatically and / or drawn by hand - please check</span></h2>" in block
+    assert "<b>cam1</b> · drawn by hand" in block
+    for fragment in ("station <b>press</b>", "rest zone <b>break</b>", "moving machine zone <b>m1</b> (linked to press)", "tracking area <b>floor</b>: people are followed only in here",
+                     "ignored area <b>tv</b>: people are not analysed in here"):
+        assert fragment in block
+    assert block.count("(drawn by hand)") == 5
+
+
+def test_setup_block_after_editing_what_was_learned():
+    learned_cfg = build_camera_config(LEARNED["spots"], LEARNED["motion"], LEARNED["lamps"])
+    cam = dict(learned_cfg)
+    cam["zones"] = [learned_cfg["zones"][0], dict(name="bench", polygon=SQUARE(0.3, 0.7), kind="workstation")]  # spot2 deleted, a bench drawn
+    cam["machines"] = [{k: v for k, v in m.items() if k != "zone"} for m in learned_cfg["machines"]]  # (they were linked to spot2)
+    block = _setup_section({"cam1": LEARNED}, dict(cameras=dict(cam1=cam)))
+    assert "learned from 70 s of footage, then changed by hand" in block
+    assert "station <b>spot1</b>: people stood here for 2.7 min in total" in block  # still as it was found: the learning's numbers stay
+    assert "station <b>bench</b> <span class=tag>(drawn by hand)</span>" in block
+    assert "spot2" not in block  # the deleted one is gone from the list
+
+
+def test_a_moved_zone_loses_the_learning_numbers():
+    learned_cfg = build_camera_config(LEARNED["spots"], [], [])
+    learned_cfg["zones"][0] = dict(learned_cfg["zones"][0], polygon=SQUARE(0.12, 0.1))  # moved by 2 % of the picture
+    block = _setup_section({"cam1": LEARNED}, dict(cameras=dict(cam1=learned_cfg)))
+    assert "people stood here for 2.7 min" not in block and "people stood here for 40 s" in block  # spot1 moved: its numbers no longer apply; spot2 is untouched
