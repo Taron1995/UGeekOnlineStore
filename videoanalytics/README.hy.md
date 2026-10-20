@@ -1,6 +1,6 @@
 # videoanalytics - մարդկանց, հաստոցների և նախապատրաստվածքների օֆլայն վերլուծություն բազմօրյա տեսահսկման ձայնագրությունների համար
 
-English: [README.md](README.md) · Կոդի կառուցվածքը՝ [ARCHITECTURE.hy.md](ARCHITECTURE.hy.md)
+English: [README.md](README.md) · Կոդի կառուցվածքը՝ [ARCHITECTURE.hy.md](ARCHITECTURE.hy.md) · Գծապատկերներ՝ [docs/architecture.html](docs/architecture.html)
 
 Աշխատում է արդեն ունեցած ձայնագրությունների վրա (բազմօրյա նյութ, բազմաթիվ տեսախցիկներ), լիովին օֆլայն, միայն տեսախցիկներով (առանց հաստոցների սենսորների)։
 

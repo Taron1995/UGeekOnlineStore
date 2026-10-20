@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="hy"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>videoanalytics կառուցվածք</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans:wght@400;600;700&family=Noto+Sans+Armenian:wght@400;600;700&display=swap">
+<style>
+:root{--bg:#f1f4f8;--surface:#ffffff;--fg:#162030;--muted:#586577;--line:#d5dce6;--line2:#a9b4c2;--arrow:#46546a;--accent:#e04f39;--out:#2f6fe4;--in:#e04f39;--dot:#d9e0ea;--entry:#5f6b7c;--entry-bg:#edeff1;--entry-ln:#a7aeb7;--orch:#2f6fe4;--orch-bg:#e8effc;--orch-ln:#8db0f0;--setup:#cf3a86;--setup-bg:#fae9f2;--setup-ln:#e593bc;--process:#0e9886;--process-bg:#e4f4f2;--process-ln:#7ac6bc;--store:#c07a0b;--store-bg:#f8f0e4;--store-ln:#dcb679;--report:#7c4dd8;--report-bg:#f1ebfb;--report-ln:#b79dea;--util:#7b8794;--util-bg:#f0f2f3;--util-ln:#b6bdc4;--sans:"Noto Sans","Noto Sans Armenian","Segoe UI",system-ui,sans-serif;--mono:"JetBrains Mono","Noto Sans Mono",ui-monospace,Consolas,monospace}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#10151c;--surface:#19212b;--fg:#e5ebf3;--muted:#98a6b8;--line:#2c3746;--line2:#4a586b;--arrow:#9fb0c6;--accent:#ff7a63;--out:#78a6ff;--in:#ff7a63;--dot:#1f2833;--entry:#a3adbd;--entry-bg:#303944;--entry-ln:#656e7b;--orch:#78a6ff;--orch-bg:#29384f;--orch-ln:#4d6aa0;--setup:#f287bb;--setup-bg:#3e3243;--setup-ln:#90597a;--process:#45d1bd;--process-bg:#203f44;--process-ln:#31827b;--store:#f2b552;--store-bg:#3e3a32;--store-ln:#907240;--report:#b999f7;--report-bg:#34354e;--report-ln:#71639b;--util:#98a3b0;--util-bg:#2f3742;--util-ln:#5f6874;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#10151c;--surface:#19212b;--fg:#e5ebf3;--muted:#98a6b8;--line:#2c3746;--line2:#4a586b;--arrow:#9fb0c6;--accent:#ff7a63;--out:#78a6ff;--in:#ff7a63;--dot:#1f2833;--entry:#a3adbd;--entry-bg:#303944;--entry-ln:#656e7b;--orch:#78a6ff;--orch-bg:#29384f;--orch-ln:#4d6aa0;--setup:#f287bb;--setup-bg:#3e3243;--setup-ln:#90597a;--process:#45d1bd;--process-bg:#203f44;--process-ln:#31827b;--store:#f2b552;--store-bg:#3e3a32;--store-ln:#907240;--report:#b999f7;--report-bg:#34354e;--report-ln:#71639b;--util:#98a3b0;--util-bg:#2f3742;--util-ln:#5f6874;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--sans)}
+.page{max-width:1040px;margin:0 auto;padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:clamp(24px,4vw,32px);line-height:1.2;margin:0 0 10px;font-weight:700;text-wrap:balance}
+h2{font-size:19px;line-height:1.3;margin:0 0 6px;font-weight:700;text-wrap:balance}
+.lead{max-width:68ch;color:var(--muted);margin:0 0 18px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0 0 6px;padding:0;list-style:none;font-size:13px;color:var(--muted)}
+.legend li{display:flex;align-items:center;gap:7px}
+.legend i{width:14px;height:14px;border-radius:4px;border:2px solid var(--c);background:var(--cb);display:inline-block}
+.legend i.opt{border-style:dashed}
+.swipe{display:none;margin:8px 0 0;font-size:13px;color:var(--muted)}
+@media (max-width:820px){.swipe{display:block}}
+section{margin-top:38px}
+section>p{margin:0 0 12px;max-width:70ch;color:var(--muted)}
+.fig{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 6px 4px}
+.scroll{overflow-x:auto}
+.fig svg{display:block;width:100%;height:auto}
+.fig figcaption{padding:8px 12px 12px;font-size:13.5px;color:var(--muted);max-width:82ch}
+code,.mono{font-family:var(--mono)}
+code{font-size:.9em;background:var(--line);padding:1px 5px;border-radius:4px}
+#dep-info{margin:10px 6px 4px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:14px;min-height:96px}
+#dep-info b{font-family:var(--mono);font-size:15px}
+#dep-info .row{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#dep-info .row span.k{color:var(--muted);font-size:13px;margin-right:2px}
+#dep-info .pill{font-family:var(--mono);font-size:12px;padding:1px 8px;border-radius:99px;border:1.5px solid var(--out);color:var(--fg);background:transparent}
+#dep-info .pill.in{border-color:var(--in)}
+#dep-info .pill.lz{border-style:dashed}
+footer{margin-top:40px;color:var(--muted);font-size:13px;max-width:78ch}
+/* ---- drawing ---- */
+svg text{font-family:var(--sans)}
+.t{font-size:13px;fill:var(--fg)}
+.tn{font-weight:600}
+.mono{font-family:var(--mono);font-size:12px;fill:var(--fg)}
+.monoL{font-family:var(--mono);font-size:14px;font-weight:600;fill:var(--fg)}
+.monoS{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+.d{font-size:11px;fill:var(--muted)}
+.n{font-size:12px;fill:var(--fg)}
+.nb{font-size:12px;font-weight:600;fill:var(--fg)}
+.al{font-size:11px;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+.alh{font-size:11px;font-weight:600;fill:var(--accent);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+.hd{font-size:11px;font-weight:700;letter-spacing:.07em;fill:var(--muted)}
+.node{fill:var(--surface);stroke:var(--line2);stroke-width:1.4}
+.io{fill:var(--bg);stroke:var(--line2);stroke-width:1.4;stroke-dasharray:2 3}
+.band{stroke-width:1.2}
+.chip{fill:var(--surface);stroke-width:1.5}
+.opt{stroke-dasharray:5 4}
+.gate{fill:var(--surface);stroke:var(--accent);stroke-width:2}
+.hot{fill:var(--accent);stroke:none}
+.hot-t{font-size:11px;font-weight:700;fill:#fff}
+.ar{fill:none;stroke:var(--arrow);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+.ar.hi{stroke:var(--accent);stroke-width:2}
+.ar.dash{stroke-dasharray:5 4}
+.ar.thin{stroke-width:1.2}
+.mk{fill:var(--arrow)}.mk-hi{fill:var(--accent)}.mk-out{fill:var(--out)}.mk-in{fill:var(--in)}
+.rule{stroke:var(--line);stroke-width:1}
+.dot{fill:var(--dot)}
+.band.entry{fill:var(--entry-bg);stroke:var(--entry-ln)}.chip.entry{stroke:var(--entry)}.mod.entry rect{fill:var(--entry-bg);stroke:var(--entry)}
+.band.orch{fill:var(--orch-bg);stroke:var(--orch-ln)}.chip.orch{stroke:var(--orch)}.mod.orch rect{fill:var(--orch-bg);stroke:var(--orch)}
+.band.setup{fill:var(--setup-bg);stroke:var(--setup-ln)}.chip.setup{stroke:var(--setup)}.mod.setup rect{fill:var(--setup-bg);stroke:var(--setup)}
+.band.process{fill:var(--process-bg);stroke:var(--process-ln)}.chip.process{stroke:var(--process)}.mod.process rect{fill:var(--process-bg);stroke:var(--process)}
+.band.store{fill:var(--store-bg);stroke:var(--store-ln)}.chip.store{stroke:var(--store)}.mod.store rect{fill:var(--store-bg);stroke:var(--store)}
+.band.report{fill:var(--report-bg);stroke:var(--report-ln)}.chip.report{stroke:var(--report)}.mod.report rect{fill:var(--report-bg);stroke:var(--report)}
+.band.util{fill:var(--util-bg);stroke:var(--util-ln)}.chip.util{stroke:var(--util)}.mod.util rect{fill:var(--util-bg);stroke:var(--util)}
+
+.edge{fill:none;stroke:var(--fg);stroke-width:1;opacity:.17}
+.edge.lazy{stroke-dasharray:4 3}
+.sel-on .edge{opacity:.05}
+.sel-on .edge.out{stroke:var(--out);stroke-width:2;opacity:1}
+.sel-on .edge.in{stroke:var(--in);stroke-width:2;opacity:1}
+.mod{cursor:pointer;outline:none}
+.mod rect{stroke-width:1.5}
+.mod text{pointer-events:none}
+.mod.opt rect{stroke-dasharray:5 4}
+.sel-on .mod{opacity:.38}
+.sel-on .mod.sel,.sel-on .mod.imp,.sel-on .mod.usd{opacity:1}
+.sel-on .mod.sel rect{stroke-width:3.2}
+.sel-on .mod.imp rect{stroke:var(--out);stroke-width:2.6}
+.sel-on .mod.usd rect{stroke:var(--in);stroke-width:2.6}
+.mod:focus-visible rect{stroke:var(--fg);stroke-width:3}
+.keyl{font-size:11px;fill:var(--muted)}
+@media (prefers-reduced-motion: no-preference){.edge,.mod{transition:opacity .12s}}
+</style>
+</head><body>
+<div class="page">
+<header>
+<h1>videoanalytics. Ծրագրի կառուցվածքը</h1>
+<p class="lead">Վիդեոն մտնում է վերևից, հաշվետվությունը դուրս է գալիս ներքևից։ Վեց գծապատկեր՝ ընդհանուր սխեմայից մինչև մոդուլների իրական կապերը։ Անունները և թվերը վերցված են կոդից՝ 5 280 տող, 26 ֆայլ։</p>
+<ul class="legend" aria-label="Գույների նշանակությունը"><li><i style="--c:var(--entry);--cb:var(--entry-bg)"></i>մուտք</li><li><i style="--c:var(--orch);--cb:var(--orch-bg)"></i>կազմակերպում</li><li><i style="--c:var(--setup);--cb:var(--setup-bg)"></i>կարգավորում</li><li><i style="--c:var(--process);--cb:var(--process-bg)"></i>մշակում</li><li><i style="--c:var(--store);--cb:var(--store-bg)"></i>պահպանում</li><li><i style="--c:var(--report);--cb:var(--report-bg)"></i>հաշվետվություն</li><li><i style="--c:var(--util);--cb:var(--util-bg)"></i>օժանդակ</li><li><i class="opt" style="--c:var(--muted);--cb:transparent"></i>կամընտիր / «ծույլ»</li></ul>
+<p class="swipe">Գծապատկերները լայն են․ նեղ էկրանին սահեցրեք դրանք աջ ու ձախ։</p>
+</header>
+<section><h2>1. Ընդհանուր սխեմա. ինչպես է վիդեոն դառնում հաշվետվություն</h2><figure class="fig"><div class="scroll"><svg viewBox="0 0 980 752" role="img" aria-label="Ընդհանուր սխեմա՝ վիդեոներից մինչև հաշվետվություն, կողքին՝ կարգավորման ֆայլը" style="min-width:760px" xmlns="http://www.w3.org/2000/svg"><defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk" d="M0,1 L10,5 L0,9 z"/></marker><marker id="h1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-hi" d="M0,1 L10,5 L0,9 z"/></marker><marker id="o1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-out" d="M0,1 L10,5 L0,9 z"/></marker><marker id="i1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-in" d="M0,1 L10,5 L0,9 z"/></marker></defs>
+<rect class="io" x="155" y="10" width="380" height="42" rx="21" />
+<text class="t" x="345" y="36" text-anchor="middle" >Վիդեոներ՝ օրերով նյութ, մի քանի տեսախցիկ</text>
+<rect class="band entry" x="20" y="94" width="650" height="84" rx="10" />
+<text class="hd" x="34" y="113" >ՄՈՒՏՔ</text>
+<rect class="chip entry" x="34" y="124" width="148" height="44" rx="7" />
+<text class="mono tn" x="108" y="141" text-anchor="middle" >cli.py</text>
+<text class="d" x="108" y="157" text-anchor="middle" >13 հրաման</text>
+<rect class="chip entry" x="192" y="124" width="148" height="44" rx="7" />
+<text class="mono tn" x="266" y="141" text-anchor="middle" >gui.py</text>
+<text class="d" x="266" y="157" text-anchor="middle" >պատուհան</text>
+<rect class="chip entry" x="350" y="124" width="148" height="44" rx="7" />
+<text class="mono tn" x="424" y="141" text-anchor="middle" >run_pipeline.py</text>
+<text class="d" x="424" y="157" text-anchor="middle" >PyCharm-ի գործարկիչ</text>
+<rect class="chip entry" x="508" y="124" width="148" height="44" rx="7" />
+<text class="mono tn" x="582" y="141" text-anchor="middle" >analyze_video.bat</text>
+<text class="d" x="582" y="157" text-anchor="middle" >drag and drop</text>
+<rect class="band orch" x="20" y="218" width="650" height="84" rx="10" />
+<text class="hd" x="34" y="237" >ԿԱԶՄԱԿԵՐՊՈՒՄ</text>
+<rect class="chip orch" x="34" y="248" width="148" height="44" rx="7" />
+<text class="mono tn" x="108" y="265" text-anchor="middle" >analyze.py</text>
+<text class="d" x="108" y="281" text-anchor="middle" >պլան + զուգահեռ</text>
+<rect class="chip orch" x="192" y="248" width="148" height="44" rx="7" />
+<text class="mono tn" x="266" y="265" text-anchor="middle" >sources.py</text>
+<text class="d" x="266" y="281" text-anchor="middle" >ֆայլ, տեսախցիկ, ժամ</text>
+<rect class="chip orch" x="350" y="248" width="148" height="44" rx="7" />
+<text class="mono tn" x="424" y="265" text-anchor="middle" >diagnostics.py</text>
+<text class="d" x="424" y="281" text-anchor="middle" >doctor, ստուգում</text>
+<rect class="chip orch" x="508" y="248" width="148" height="44" rx="7" />
+<text class="mono tn" x="582" y="265" text-anchor="middle" >paths.py</text>
+<text class="d" x="582" y="281" text-anchor="middle" >մոդելի տեղը</text>
+<rect class="band process" x="20" y="342" width="650" height="142" rx="10" />
+<text class="hd" x="34" y="361" >ՄՇԱԿՈՒՄ  ·  մեկ ձայնագրություն = մեկ աշխատանք, զուգահեռ worker պրոցեսներում</text>
+<rect class="chip process" x="34" y="372" width="116" height="44" rx="7" />
+<text class="mono tn" x="92" y="389" text-anchor="middle" >pipeline.py</text>
+<text class="d" x="92" y="405" text-anchor="middle" >կադրերի ցիկլ</text>
+<rect class="chip process" x="160" y="372" width="116" height="44" rx="7" />
+<text class="mono tn" x="218" y="389" text-anchor="middle" >detector.py</text>
+<text class="d" x="218" y="405" text-anchor="middle" >մարդիկ (YOLOX)</text>
+<rect class="chip process" x="286" y="372" width="116" height="44" rx="7" />
+<text class="mono tn" x="344" y="389" text-anchor="middle" >tracker.py</text>
+<text class="d" x="344" y="405" text-anchor="middle" >հետևում</text>
+<rect class="chip process" x="412" y="372" width="116" height="44" rx="7" />
+<text class="mono tn" x="470" y="389" text-anchor="middle" >analyzers.py</text>
+<text class="d" x="470" y="405" text-anchor="middle" >չափումներ</text>
+<rect class="chip process" x="538" y="372" width="116" height="44" rx="7" />
+<text class="mono tn" x="596" y="389" text-anchor="middle" >zones.py</text>
+<text class="d" x="596" y="405" text-anchor="middle" >գոտի, շարժում</text>
+<rect class="chip process" x="34" y="426" width="116" height="44" rx="7" />
+<text class="mono tn" x="92" y="443" text-anchor="middle" >lamp.py</text>
+<text class="d" x="92" y="459" text-anchor="middle" >լամպի գույն</text>
+<rect class="chip process" x="160" y="426" width="116" height="44" rx="7" />
+<text class="mono tn" x="218" y="443" text-anchor="middle" >schedule.py</text>
+<text class="d" x="218" y="459" text-anchor="middle" >ժամանակացույց</text>
+<rect class="chip process" x="286" y="426" width="116" height="44" rx="7" />
+<text class="mono tn" x="344" y="443" text-anchor="middle" >video.py</text>
+<text class="d" x="344" y="459" text-anchor="middle" >կադր, կլիպ</text>
+<rect class="chip process opt" x="412" y="426" width="116" height="44" rx="7" />
+<text class="mono tn" x="470" y="443" text-anchor="middle" >inactivity.py</text>
+<text class="d" x="470" y="459" text-anchor="middle" >անշարժություն</text>
+<rect class="chip process opt" x="538" y="426" width="116" height="44" rx="7" />
+<text class="mono tn" x="596" y="443" text-anchor="middle" >workpieces.py</text>
+<text class="d" x="596" y="459" text-anchor="middle" >մասերի հաշվարկ</text>
+<rect class="band store" x="20" y="524" width="650" height="84" rx="10" />
+<text class="hd" x="34" y="543" >ՊԱՀՊԱՆՈՒՄ</text>
+<rect class="chip store" x="34" y="554" width="148" height="44" rx="7" />
+<text class="mono tn" x="108" y="571" text-anchor="middle" >storage.py</text>
+<text class="d" x="108" y="587" text-anchor="middle" >shard-եր -&gt; միավորում</text>
+<rect class="node" x="220" y="561" width="150" height="30" rx="15" />
+<text class="mono" x="295" y="581" text-anchor="middle" >shards/*.db</text>
+<path class="ar thin" d="M370,576 L428,576" marker-end="url(#a1)"/>
+<text class="al" x="399" y="568" text-anchor="middle" >միավորում</text>
+<rect class="node" x="430" y="561" width="150" height="30" rx="15" />
+<text class="mono" x="505" y="581" text-anchor="middle" >analytics.db</text>
+<rect class="band report" x="20" y="648" width="650" height="84" rx="10" />
+<text class="hd" x="34" y="667" >ՀԱՇՎԵՏՎՈՒԹՅՈՒՆ</text>
+<rect class="chip report" x="34" y="678" width="120" height="44" rx="7" />
+<text class="mono tn" x="94" y="695" text-anchor="middle" >report.py</text>
+<text class="d" x="94" y="711" text-anchor="middle" >HTML</text>
+<rect class="chip report" x="164" y="678" width="120" height="44" rx="7" />
+<text class="mono tn" x="224" y="695" text-anchor="middle" >metrics.py</text>
+<text class="d" x="224" y="711" text-anchor="middle" >թվերի հաշվարկ</text>
+<rect class="node" x="316" y="685" width="100" height="30" rx="15" />
+<text class="mono" x="366" y="705" text-anchor="middle" >report.html</text>
+<rect class="node" x="428" y="685" width="100" height="30" rx="15" />
+<text class="mono" x="478" y="705" text-anchor="middle" >*.csv</text>
+<rect class="node" x="540" y="685" width="100" height="30" rx="15" />
+<text class="mono" x="590" y="705" text-anchor="middle" >clips/</text>
+<path class="ar" d="M345,52 L345,94" marker-end="url(#a1)"/>
+<text class="al" x="357" y="77" >ֆայլ կամ թղթապանակ</text>
+<path class="ar" d="M345,178 L345,218" marker-end="url(#a1)"/>
+<text class="al" x="357" y="202" >ուղիներ + ընտրանքներ</text>
+<path class="ar" d="M345,302 L345,342" marker-end="url(#a1)"/>
+<text class="al" x="357" y="326" >աշխատանքներ (ձայնագրություն + կարգավորում)</text>
+<path class="ar" d="M345,484 L345,524" marker-end="url(#a1)"/>
+<text class="al" x="357" y="508" >shard՝ փոքր .db ֆայլ ամեն ձայնագրությանը</text>
+<path class="ar" d="M345,608 L345,648" marker-end="url(#a1)"/>
+<text class="al" x="357" y="632" >analytics.db</text>
+<rect class="band setup" x="772" y="94" width="188" height="376" rx="10" />
+<text class="hd" x="784" y="113" >ԿԱՐԳԱՎՈՐՈՒՄ</text>
+<rect class="chip setup" x="784" y="124" width="164" height="44" rx="7" />
+<text class="mono tn" x="866" y="141" text-anchor="middle" >autoconfig.py</text>
+<text class="d" x="866" y="157" text-anchor="middle" >ավտոմատ սովորում</text>
+<path class="ar" d="M866,168 L866,212" marker-end="url(#a1)"/>
+<text class="al" x="876" y="194" >սովորած</text>
+<rect class="chip setup" x="784" y="212" width="164" height="106" rx="7" />
+<text class="mono nb" x="796" y="233" >cameras.auto.yaml</text>
+<text class="monoS" x="796" y="253" >areas: [...]</text>
+<text class="monoS" x="796" y="267" >zones: [...]</text>
+<text class="monoS" x="796" y="281" >machines: [...]</text>
+<text class="d" x="796" y="308" >կոորդինատներ 0..1</text>
+<path class="ar" d="M866,358 L866,318" marker-end="url(#a1)"/>
+<text class="al" x="876" y="342" >նկարած</text>
+<rect class="chip setup" x="784" y="358" width="164" height="44" rx="7" />
+<text class="mono tn" x="866" y="375" text-anchor="middle" >zoneeditor.py</text>
+<text class="d" x="866" y="391" text-anchor="middle" >ձեռքով նկարում</text>
+<text class="d" x="784" y="424" >setupfile.py և config.py՝</text>
+<text class="d" x="784" y="438" >ստուգում են նախքան գրելը</text>
+<path class="ar" d="M670,236 L730,236 L730,146 L784,146" marker-end="url(#a1)"/>
+<text class="al" x="676" y="229" >սովորել</text>
+<path class="ar thin" d="M784,265 L690,265 L690,690"/>
+<path class="ar thin" d="M690,265 L670,265" marker-end="url(#a1)"/>
+<text class="al" x="698" y="257" >կարդում է</text>
+<path class="ar thin" d="M690,415 L670,415" marker-end="url(#a1)"/>
+<text class="al" x="698" y="395" >գոտիներ,</text>
+<text class="al" x="698" y="407" >հաստոցներ</text>
+<path class="ar thin" d="M690,690 L670,690" marker-end="url(#a1)"/>
+<text class="al" x="698" y="670" >ցույց է տալիս</text>
+<text class="al" x="698" y="682" >սովորածը</text>
+</svg></div><figcaption>Տվյալը գնում է վերևից ներքև։ Աջ կողմի <code>cameras.auto.yaml</code> ֆայլը որոշում է՝ ինչ և որտեղ չափել։ Այն կամ սովորում է ծրագիրը, կամ նկարում եք Դուք, և նույն ֆայլը կարդում են վերլուծությունը, worker-ները և հաշվետվությունը։ Կետագծով՝ կամընտիր մասեր։</figcaption></figure></section>
+<section><h2>2. Մեկ կադրի ուղին</h2><figure class="fig"><div class="scroll"><svg viewBox="0 0 980 700" role="img" aria-label="Մեկ կադրի ուղին՝ կարդալուց մինչև հաշվառում, դարպասով, որը խնայում է դետեկտորը" style="min-width:760px" xmlns="http://www.w3.org/2000/svg"><defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk" d="M0,1 L10,5 L0,9 z"/></marker><marker id="h2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-hi" d="M0,1 L10,5 L0,9 z"/></marker><marker id="o2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-out" d="M0,1 L10,5 L0,9 z"/></marker><marker id="i2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-in" d="M0,1 L10,5 L0,9 z"/></marker></defs>
+<rect class="chip process" x="40" y="16" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="44" text-anchor="middle" >Կարդալ կադրը</text>
+<rect class="chip process" x="40" y="90" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="118" text-anchor="middle" >Շարժում՝ նախորդ կադրի հետ</text>
+<rect class="chip process" x="40" y="272" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="300" text-anchor="middle" >Մարդկանց հայտնաբերում</text>
+<rect class="chip process" x="40" y="346" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="374" text-anchor="middle" >Ֆիլտր՝ ոտքերի կետով</text>
+<rect class="chip process" x="40" y="420" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="448" text-anchor="middle" >Հետևում (id-ներ)</text>
+<rect class="chip process" x="40" y="494" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="522" text-anchor="middle" >Վերլուծիչներ՝ ըստ հերթականության</text>
+<rect class="chip process" x="40" y="568" width="360" height="46" rx="8" />
+<text class="t tn" x="220" y="596" text-anchor="middle" >Մարդկանց քանակի հաշվառում</text>
+<polygon class="gate" points="220,168 400,206 220,244 40,206"/>
+<text class="t tn" x="220" y="204" text-anchor="middle" >Դարպաս</text>
+<text class="d" x="220" y="220" text-anchor="middle" >անշարժ նկար, ոչ ոք չի հետևվում՞</text>
+<path class="ar" d="M220,62 L220,90" marker-end="url(#a2)"/>
+<path class="ar" d="M220,136 L220,168" marker-end="url(#a2)"/>
+<path class="ar" d="M220,244 L220,272" marker-end="url(#a2)"/>
+<path class="ar" d="M220,318 L220,346" marker-end="url(#a2)"/>
+<path class="ar" d="M220,392 L220,420" marker-end="url(#a2)"/>
+<path class="ar" d="M220,466 L220,494" marker-end="url(#a2)"/>
+<path class="ar" d="M220,540 L220,568" marker-end="url(#a2)"/>
+<text class="al" x="230" y="262" >ոչ, ինչ-որ բան փոխվում է</text>
+<path class="ar hi" d="M400,206 L470,206 L470,517 L400,517" marker-end="url(#h2)"/>
+<text class="al" x="412" y="198" >այո</text>
+<text class="alh" x="480" y="380" >դետեկտորը չի</text>
+<text class="alh" x="480" y="394" >կանչվում, հետքերը</text>
+<text class="alh" x="480" y="408" >չեն թարմանում</text>
+<path class="ar dash" d="M220,614 L220,650 L18,650 L18,39.0 L40,39.0" marker-end="url(#a2)"/>
+<text class="al" x="30" y="668" >հաջորդ կադր (ամեն վայրկյան՝ 3 կադր)</text>
+<text class="mono" x="620" y="33" >video.open_capture</text>
+<text class="n" x="620" y="50" >ֆայլի 25 կադր/վ-ից մշակվում է ամեն 8-րդը (3 կադր/վ)</text>
+<text class="n" x="620" y="65" >ավելի քիչ կադր՝ օրերով նյութը հնարավոր է հաշվել</text>
+<text class="mono" x="620" y="107" >zones.Motion.step</text>
+<text class="n" x="620" y="124" >160×90 փոքր նկար, պիքսելների տարբերություն</text>
+<text class="n" x="620" y="139" >նախորդ կադրի հետ։ Արդյունք՝ շարժման չափ</text>
+<text class="mono" x="620" y="195" >pipeline.process_video</text>
+<text class="n" x="620" y="212" >դետեկտորը կանչվում է, եթե շարժում կա,</text>
+<text class="n" x="620" y="227" >կամ մեկը արդեն հետևվում է, կամ անցել է 3 վ</text>
+<text class="mono" x="620" y="289" >detector.PersonDetector</text>
+<text class="n" x="620" y="306" >YOLOX tiny՝ ONNX Runtime-ով, օֆլայն</text>
+<rect class="hot" x="842" y="277" width="118" height="22" rx="11" />
+<text class="hot-t" x="901" y="292" text-anchor="middle" >ամենաթանկ քայլը</text>
+<text class="mono" x="620" y="363" >pipeline.keep_in_areas</text>
+<text class="n" x="620" y="380" >watch / ignore տարածքներ՝ մարդու ոտքերի կետով</text>
+<text class="n" x="620" y="395" >(x1+x2)/2, y2</text>
+<text class="mono" x="620" y="437" >tracker.Tracker.update</text>
+<text class="n" x="620" y="454" >IoU + արագության կանխատեսում</text>
+<text class="n" x="620" y="469" >ctx.tracks (հաստատված), ctx.alive</text>
+<text class="mono" x="620" y="511" >analyzers.*.update(ctx)</text>
+<text class="n" x="620" y="528" >գոտիները՝ առաջինը, հետո գծերը, հաստոցները, ...</text>
+<text class="n" x="620" y="543" >ցանկացած այլ քայլ ավելացվում է այստեղ</text>
+<text class="mono" x="620" y="585" >pipeline.process_video</text>
+<text class="n" x="620" y="602" >րոպեական (minutes) և 5 վայրկյանանոց (fine) աղյուսակներ</text>
+</svg></div><figcaption>Վայրկյանում 3 կադր անցնում է այս շղթայով։ Դետեկտորը ամենաթանկ քայլն է, ուստի «դարպասը» այն չի կանչում, երբ նկարը անշարժ է և ոչ ոք չի հետևվում (կարմիր ճանապարհ)։ Վերլուծիչները աշխատում են ամեն դեպքում։</figcaption></figure></section>
+<section><h2>3. Վերլուծիչները և ընդհանուր գրատախտակը</h2><figure class="fig"><div class="scroll"><svg viewBox="0 0 1040 560" role="img" aria-label="Վերլուծիչները և ընդհանուր Ctx գրատախտակը" style="min-width:820px" xmlns="http://www.w3.org/2000/svg"><defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk" d="M0,1 L10,5 L0,9 z"/></marker><marker id="h3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-hi" d="M0,1 L10,5 L0,9 z"/></marker><marker id="o3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-out" d="M0,1 L10,5 L0,9 z"/></marker><marker id="i3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-in" d="M0,1 L10,5 L0,9 z"/></marker></defs>
+<rect class="chip process" x="8" y="214" width="130" height="96" rx="8" />
+<text class="mono nb" x="73" y="240" text-anchor="middle" >pipeline.py</text>
+<text class="d" x="73" y="258" text-anchor="middle" >process_video</text>
+<text class="d" x="73" y="290" text-anchor="middle" >կադր + հետքեր</text>
+<path class="ar" d="M138,262 L222,262" marker-end="url(#a3)"/>
+<text class="al" x="180" y="250" text-anchor="middle" >ամեն կադր</text>
+<rect class="node" x="224" y="34" width="216" height="492" rx="10" style="stroke:var(--process);stroke-width:2"/>
+<text class="monoL" x="240" y="62" >Ctx</text>
+<text class="d" x="240" y="80" >ընդհանուր գրատախտակ</text>
+<text class="hd" x="240" y="112" >ԿԱՐԴԱՑՎՈՂ</text>
+<text class="monoS" x="240" y="130" >frame, t, w, h</text>
+<text class="monoS" x="240" y="147" >tracks (այս կադրի հետքեր)</text>
+<text class="monoS" x="240" y="164" >alive (բոլոր կենդանի id)</text>
+<text class="monoS" x="240" y="181" >motion (շարժման քարտեզ)</text>
+<text class="monoS" x="240" y="198" >occupied (գոտի -&gt; զբաղված)</text>
+<line class="rule" x1="240" y1="228" x2="424" y2="228"/>
+<text class="hd" x="240" y="252" >ԳՐՎՈՂ</text>
+<text class="monoS" x="240" y="270" >events</text>
+<text class="monoS" x="240" y="287" >minutes</text>
+<text class="monoS" x="240" y="304" >zone_minutes</text>
+<text class="monoS" x="240" y="321" >machine_minutes</text>
+<text class="monoS" x="240" y="338" >fine, zone_fine,</text>
+<text class="monoS" x="240" y="355" >machine_fine</text>
+<line class="rule" x1="240" y1="384" x2="424" y2="384"/>
+<text class="hd" x="240" y="408" >ՄԵԹՈԴՆԵՐ</text>
+<text class="monoS" x="240" y="426" >emit(type, subject, value)</text>
+<text class="monoS" x="240" y="443" >evidence() -&gt; կադր + կլիպ</text>
+<text class="monoS" x="240" y="460" >zone_row(), machine_row()</text>
+<rect class="chip process" x="500" y="34" width="400" height="62" rx="8" />
+<text class="mono nb" x="540" y="53" >ZoneAnalyzer</text>
+<text class="monoS" x="888" y="53" text-anchor="end" >zones</text>
+<text class="n" x="540" y="70" >մուտք/ելք գոտուց, զբաղվածությունը րոպեներով</text>
+<text class="monoS" x="540" y="86" >zone_enter, zone_exit · zone_minutes, zone_fine</text>
+<circle class="hot" cx="520" cy="65.0" r="11"/>
+<text class="hot-t" x="520" y="69" text-anchor="middle" >1</text>
+<path class="ar thin" d="M500,65.0 L440,65.0" marker-start="url(#a3)" marker-end="url(#a3)"/>
+<rect class="chip process" x="500" y="110" width="400" height="62" rx="8" />
+<text class="mono nb" x="540" y="129" >LineAnalyzer</text>
+<text class="monoS" x="888" y="129" text-anchor="end" >lines</text>
+<text class="n" x="540" y="146" >գծի հատում (in / out)</text>
+<text class="monoS" x="540" y="162" >line_cross</text>
+<circle class="hot" cx="520" cy="141.0" r="11"/>
+<text class="hot-t" x="520" y="145" text-anchor="middle" >2</text>
+<path class="ar thin" d="M500,141.0 L440,141.0" marker-start="url(#a3)" marker-end="url(#a3)"/>
+<rect class="chip process" x="500" y="186" width="400" height="62" rx="8" />
+<text class="mono nb" x="540" y="205" >MachineAnalyzer</text>
+<text class="monoS" x="888" y="205" text-anchor="end" >machines</text>
+<text class="n" x="540" y="222" >WORK / IDLE, ցիկլեր, աշխատանք առանց օպերատորի</text>
+<text class="monoS" x="540" y="238" >machine_state, cycle · machine_minutes, machine_fine</text>
+<circle class="hot" cx="520" cy="217.0" r="11"/>
+<text class="hot-t" x="520" y="221" text-anchor="middle" >3</text>
+<path class="ar thin" d="M500,217.0 L440,217.0" marker-start="url(#a3)" marker-end="url(#a3)"/>
+<rect class="chip process" x="500" y="262" width="400" height="62" rx="8" />
+<text class="mono nb" x="540" y="281" >GatheringAnalyzer</text>
+<text class="monoS" x="888" y="281" text-anchor="end" >gathering</text>
+<text class="n" x="540" y="298" >2+ մարդ իրար մոտ՝ աշխատանքային գոտիներից դուրս</text>
+<text class="monoS" x="540" y="314" >gathering (+ կադր և կլիպ)</text>
+<circle class="hot" cx="520" cy="293.0" r="11"/>
+<text class="hot-t" x="520" y="297" text-anchor="middle" >4</text>
+<path class="ar thin" d="M500,293.0 L440,293.0" marker-start="url(#a3)" marker-end="url(#a3)"/>
+<rect class="chip process opt" x="500" y="338" width="400" height="62" rx="8" />
+<text class="mono nb" x="540" y="357" >InactivityAnalyzer</text>
+<text class="monoS" x="888" y="357" text-anchor="end" >inactivity</text>
+<text class="n" x="540" y="374" >մարդ, որի մարմինը գրեթե չի շարժվում</text>
+<text class="monoS" x="540" y="390" >inactive</text>
+<circle class="hot" cx="520" cy="369.0" r="11"/>
+<text class="hot-t" x="520" y="373" text-anchor="middle" >5</text>
+<path class="ar thin" d="M500,369.0 L440,369.0" marker-start="url(#a3)" marker-end="url(#a3)"/>
+<rect class="chip process opt" x="500" y="414" width="400" height="62" rx="8" />
+<text class="mono nb" x="540" y="433" >WorkpieceAnalyzer</text>
+<text class="monoS" x="888" y="433" text-anchor="end" >workpieces</text>
+<text class="n" x="540" y="450" >նախապատրաստվածքները գծի վրայով</text>
+<text class="monoS" x="540" y="466" >workpiece</text>
+<circle class="hot" cx="520" cy="445.0" r="11"/>
+<text class="hot-t" x="520" y="449" text-anchor="middle" >6</text>
+<path class="ar thin" d="M500,445.0 L440,445.0" marker-start="url(#a3)" marker-end="url(#a3)"/>
+<text class="al" x="470" y="57" text-anchor="middle" >update(ctx)</text>
+<path class="ar hi" d="M900,65.0 L932,65.0 L932,217.0 L900,217.0" marker-end="url(#h3)"/>
+<text class="alh" x="940" y="119" >ctx.occupied</text>
+<text class="alh" x="940" y="133" >աշխատանք</text>
+<text class="alh" x="940" y="147" >առանց</text>
+<text class="alh" x="940" y="161" >օպերատորի</text>
+<text class="d" x="500" y="500" >Թվերը՝ build_analyzers-ի հերթականությունը։ Գոտիները առաջինն են,</text>
+<text class="d" x="500" y="516" >որովհետև հաստոցները կարդում են նրանց «զբաղված է» նշանը։</text>
+<text class="d" x="500" y="532" >Կետագծով՝ կամընտիր (ծանր կախվածություն, ներմուծվում են երբ պետք են)։</text>
+</svg></div><figcaption>Ամեն վերլուծիչ ունի երկու մեթոդ՝ <code>update(ctx)</code> (ամեն կադրին) և <code>finish(ctx)</code> (վերջում)։ Նրանք չեն ճանաչում իրար, միայն կարդում և գրում են <code>Ctx</code>-ը։ Ահա թե ինչու նոր չափում ավելացնելը նոր դաս է, ոչ թե գոյություն ունեցածի խմբագրում։</figcaption></figure></section>
+<section><h2>4. Հաստոցի աշխատանքը՝ երեք աղբյուր</h2><figure class="fig"><div class="scroll"><svg viewBox="0 0 980 470" role="img" aria-label="Հաստոցի աշխատանքի երեք աղբյուրը՝ lamp, motion, activity" style="min-width:820px" xmlns="http://www.w3.org/2000/svg"><defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk" d="M0,1 L10,5 L0,9 z"/></marker><marker id="h4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-hi" d="M0,1 L10,5 L0,9 z"/></marker><marker id="o4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-out" d="M0,1 L10,5 L0,9 z"/></marker><marker id="i4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-in" d="M0,1 L10,5 L0,9 z"/></marker></defs>
+<rect class="band process" x="0" y="16" width="868" height="128" rx="10" />
+<text class="monoL" x="16" y="50" >lamp</text>
+<text class="n" x="16" y="74" >հաստոցն ունի</text>
+<text class="n" x="16" y="89" >ազդանշանային լամպ</text>
+<rect class="chip process" x="246" y="40" width="160" height="76" rx="8" />
+<text class="hd" x="326" y="60" text-anchor="middle" >ԻՆՉ Է ԴԻՏՎՈՒՄ</text>
+<text class="n" x="326" y="82" text-anchor="middle" >ROI՝ լամպի շուրջ</text>
+<text class="n" x="326" y="98" text-anchor="middle" >(փոքր պոլիգոն)</text>
+<rect class="chip process" x="442" y="40" width="240" height="76" rx="8" />
+<text class="hd" x="562" y="60" text-anchor="middle" >ԻՆՉ Է ՀԱՇՎՎՈՒՄ</text>
+<text class="n" x="562" y="82" text-anchor="middle" >գույն (HSV)՝</text>
+<text class="n" x="562" y="98" text-anchor="middle" >կարմիր, դեղին, կանաչ</text>
+<path class="ar" d="M406,78 L442,78" marker-end="url(#a4)"/>
+<path class="ar thin" d="M208,78 L246,78" marker-end="url(#a4)"/>
+<rect class="chip process" x="718" y="40" width="130" height="76" rx="8" />
+<text class="mono nb" x="783" y="64" text-anchor="middle" >LampReader</text>
+<text class="d" x="783" y="84" text-anchor="middle" >հարթեցում 3 վ</text>
+<text class="d" x="783" y="99" text-anchor="middle" >կանաչ = աշխատում է</text>
+<path class="ar" d="M682,78 L718,78" marker-end="url(#a4)"/>
+<path class="ar" d="M848,78 L884,78" marker-end="url(#a4)"/>
+<rect class="band process" x="0" y="158" width="868" height="128" rx="10" />
+<text class="monoL" x="16" y="192" >motion</text>
+<text class="n" x="16" y="216" >հաստոցը աշխատում է</text>
+<text class="n" x="16" y="231" >ինքնուրույն</text>
+<rect class="chip process" x="246" y="182" width="160" height="76" rx="8" />
+<text class="hd" x="326" y="202" text-anchor="middle" >ԻՆՉ Է ԴԻՏՎՈՒՄ</text>
+<text class="n" x="326" y="224" text-anchor="middle" >ROI՝ շարժվող</text>
+<text class="n" x="326" y="240" text-anchor="middle" >մասի շուրջ</text>
+<rect class="chip process" x="442" y="182" width="240" height="76" rx="8" />
+<text class="hd" x="562" y="202" text-anchor="middle" >ԻՆՉ Է ՀԱՇՎՎՈՒՄ</text>
+<text class="n" x="562" y="230" text-anchor="middle" >շարժման չափ ROI-ում</text>
+<path class="ar" d="M406,220 L442,220" marker-end="url(#a4)"/>
+<path class="ar thin" d="M208,220 L246,220" marker-end="url(#a4)"/>
+<rect class="hot" x="486" y="258" width="152" height="22" rx="11" />
+<text class="hot-t" x="562" y="273" text-anchor="middle" >մարդիկ դիմակավորված</text>
+<rect class="chip process" x="718" y="182" width="130" height="76" rx="8" />
+<text class="mono nb" x="783" y="206" text-anchor="middle" >MachineState</text>
+<text class="d" x="783" y="226" text-anchor="middle" >պատուհան 10 վ</text>
+<text class="d" x="783" y="241" text-anchor="middle" >հիստերեզիս</text>
+<path class="ar" d="M682,220 L718,220" marker-end="url(#a4)"/>
+<path class="ar" d="M848,220 L884,220" marker-end="url(#a4)"/>
+<rect class="band setup" x="0" y="300" width="868" height="128" rx="10" />
+<text class="monoL" x="16" y="334" >activity</text>
+<text class="n" x="16" y="358" >հաստոցի վրա մարդիկ են</text>
+<text class="n" x="16" y="373" >աշխատում, լամպ չկա</text>
+<rect class="chip process" x="246" y="324" width="160" height="76" rx="8" />
+<text class="hd" x="326" y="344" text-anchor="middle" >ԻՆՉ Է ԴԻՏՎՈՒՄ</text>
+<text class="n" x="326" y="366" text-anchor="middle" >ROI՝</text>
+<text class="n" x="326" y="382" text-anchor="middle" >մշակման հատված</text>
+<rect class="chip process" x="442" y="324" width="240" height="76" rx="8" />
+<text class="hd" x="562" y="344" text-anchor="middle" >ԻՆՉ Է ՀԱՇՎՎՈՒՄ</text>
+<text class="n" x="562" y="366" text-anchor="middle" >մարդը հատվածում ≥ 8 վ</text>
+<text class="n" x="562" y="382" text-anchor="middle" >ԵՎ շարժում հատվածում</text>
+<path class="ar" d="M406,362 L442,362" marker-end="url(#a4)"/>
+<path class="ar thin" d="M208,362 L246,362" marker-end="url(#a4)"/>
+<rect class="hot" x="486" y="400" width="152" height="22" rx="11" />
+<text class="hot-t" x="562" y="415" text-anchor="middle" >մարդիկ հաշվվում են</text>
+<rect class="chip process" x="718" y="324" width="130" height="76" rx="8" />
+<text class="mono nb" x="783" y="348" text-anchor="middle" >MachineState</text>
+<text class="d" x="783" y="368" text-anchor="middle" >պատուհան 10 վ</text>
+<text class="d" x="783" y="383" text-anchor="middle" >հիստերեզիս</text>
+<path class="ar" d="M682,362 L718,362" marker-end="url(#a4)"/>
+<path class="ar" d="M848,362 L884,362" marker-end="url(#a4)"/>
+<rect class="node" x="886" y="16" width="90" height="412" rx="10" style="stroke:var(--store);stroke-width:2"/>
+<text class="t tn" x="931" y="166" text-anchor="middle" >WORK</text>
+<text class="t tn" x="931" y="186" text-anchor="middle" >կամ</text>
+<text class="t tn" x="931" y="206" text-anchor="middle" >IDLE</text>
+<text class="monoS" x="931" y="260" text-anchor="middle" >machine_</text>
+<text class="monoS" x="931" y="274" text-anchor="middle" >minutes,</text>
+<text class="monoS" x="931" y="288" text-anchor="middle" >machine_</text>
+<text class="monoS" x="931" y="302" text-anchor="middle" >fine</text>
+</svg></div><figcaption>Երեքն էլ վերջում գրում են <b>նույն աղյուսակները</b>, ուստի հաշվետվությունը չի տարբերում՝ վիճակը որտեղից է։ Տարբերությունը մեկն է՝ <code>motion</code>-ում մարդիկ դիմակավորվում են (անցնողը աշխատանք չէ), <code>activity</code>-ում՝ հաշվվում են (նրանց աշխատանքը հենց շարժումն է)։ Լամպ չունեցող, մարդկանց աշխատած հաստոցի համար պետք է <code>activity</code>-ն։</figcaption></figure></section>
+<section><h2>5. Պահպանում և շարունակելիություն</h2><figure class="fig"><div class="scroll"><svg viewBox="0 0 980 540" role="img" aria-label="Պահպանում և շարունակելիություն՝ shard-եր, մատնահետք, միավորում" style="min-width:820px" xmlns="http://www.w3.org/2000/svg"><defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk" d="M0,1 L10,5 L0,9 z"/></marker><marker id="h5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-hi" d="M0,1 L10,5 L0,9 z"/></marker><marker id="o5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-out" d="M0,1 L10,5 L0,9 z"/></marker><marker id="i5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-in" d="M0,1 L10,5 L0,9 z"/></marker></defs>
+<text class="hd" x="20" y="28" >ՁԱՅՆԱԳՐՈՒԹՅՈՒՆՆԵՐ</text>
+<rect class="node" x="20" y="40" width="190" height="34" rx="8" />
+<text class="monoS" x="30" y="62" >cam1_080000.mp4</text>
+<text class="d" x="202" y="62" text-anchor="end" >20 րոպե</text>
+<rect class="node" x="20" y="84" width="190" height="34" rx="8" />
+<text class="monoS" x="30" y="106" >cam1_083000.mp4</text>
+<text class="d" x="202" y="106" text-anchor="end" >3 ժամ</text>
+<rect class="node" x="20" y="128" width="190" height="34" rx="8" />
+<text class="monoS" x="30" y="150" >cam2_080000.mp4</text>
+<text class="d" x="202" y="150" text-anchor="end" >45 րոպե</text>
+<path class="ar" d="M210,94 L240,94" marker-end="url(#a5)"/>
+<rect class="chip orch" x="242" y="40" width="164" height="126" rx="8" />
+<text class="mono nb" x="324" y="62" text-anchor="middle" >plan_tasks</text>
+<text class="d" x="324" y="84" text-anchor="middle" >երկար ֆայլ (&gt; 30 րոպե)</text>
+<text class="d" x="324" y="99" text-anchor="middle" >-&gt; ≈ 20 րոպեանոց կտորներ,</text>
+<text class="d" x="324" y="114" text-anchor="middle" >որ մեկ մեծ ֆայլը բոլոր</text>
+<text class="d" x="324" y="129" text-anchor="middle" >միջուկներին աշխատանք տա</text>
+<path class="ar" d="M406,94 L420,94" marker-end="url(#a5)"/>
+<polygon class="gate" points="510,46 600,104 510,162 420,104"/>
+<text class="n" x="510" y="92" text-anchor="middle" >shard կա՞ և hash-ը</text>
+<text class="n" x="510" y="107" text-anchor="middle" >= կարգավորման</text>
+<text class="n" x="510" y="122" text-anchor="middle" >մատնահետքի՞</text>
+<path class="ar" d="M600,104 L618,104" marker-end="url(#a5)"/>
+<text class="al" x="604" y="96" text-anchor="middle" >այո</text>
+<rect class="chip store" x="620" y="78" width="142" height="52" rx="8" />
+<text class="t tn" x="691" y="100" text-anchor="middle" >արդեն արված է</text>
+<text class="d" x="691" y="118" text-anchor="middle" >վերօգտագործվում է</text>
+<path class="ar" d="M510,162 L510,252" marker-end="url(#a5)"/>
+<text class="al" x="520" y="214" >ոչ, կամ կարգավորումը փոխվել է</text>
+<rect class="chip process" x="402" y="254" width="216" height="78" rx="8" />
+<text class="t tn" x="510" y="278" text-anchor="middle" >worker-ներ (N պրոցես)</text>
+<text class="d" x="510" y="298" text-anchor="middle" >յուրաքանչյուրը իր մեջ պահում է</text>
+<text class="d" x="510" y="312" text-anchor="middle" >դետեկտորը, կատարում process_video</text>
+<path class="ar" d="M618,293 L640,293" marker-end="url(#a5)"/>
+<rect class="chip store" x="642" y="254" width="140" height="78" rx="8" />
+<text class="mono nb" x="712" y="278" text-anchor="middle" >shard (.db)</text>
+<text class="d" x="712" y="298" text-anchor="middle" >գրվում է .tmp-ի մեջ,</text>
+<text class="d" x="712" y="312" text-anchor="middle" >ապա վերանվանվում</text>
+<rect class="chip store" x="812" y="150" width="156" height="100" rx="8" />
+<text class="mono nb" x="890" y="174" text-anchor="middle" >merge_shards</text>
+<text class="d" x="890" y="194" text-anchor="middle" >SQL-ով գումարում է</text>
+<text class="d" x="890" y="208" text-anchor="middle" >րոպեները՝ ըստ</text>
+<text class="d" x="890" y="222" text-anchor="middle" >(տեսախցիկ, րոպե)</text>
+<path class="ar" d="M762,104 L790,104 L790,175 L812,175" marker-end="url(#a5)"/>
+<path class="ar" d="M782,293 L790,293 L790,225 L812,225" marker-end="url(#a5)"/>
+<path class="ar" d="M890,250 L890,290" marker-end="url(#a5)"/>
+<rect class="node" x="815" y="290" width="150" height="34" rx="17" />
+<text class="mono" x="890" y="312" text-anchor="middle" >analytics.db</text>
+<path class="ar" d="M890,324 L890,364" marker-end="url(#a5)"/>
+<rect class="node" x="815" y="364" width="150" height="34" rx="17" />
+<text class="mono" x="890" y="386" text-anchor="middle" >report.html</text>
+<rect class="band setup" x="20" y="372" width="772" height="144" rx="10" />
+<text class="hd" x="36" y="396" >ԻՆՉՈՒ Է ԱՐԱԳ՝ ԳՈՏԻՆԵՐ ՓՈԽԵԼՈՒՑ ՀԵՏՈ</text>
+<text class="n" x="36" y="420" >fingerprint = տեսախցիկի կարգավորումը + ընտրանքները + կտորի չափը + սխեմայի տարբերակը (SHA-1-ի առաջին 12 նիշը)։</text>
+<text class="n" x="36" y="441" >cam2-ի գոտին փոխվեց  -&gt;  միայն cam2-ի shard-երի մատնահետքն է այլ  -&gt;  միայն դրանք են նորից հաշվվում,</text>
+<text class="n" x="36" y="462" >մյուս տեսախցիկների արդյունքը վերցվում է պատրաստի։ Կանգնեցրած աշխատանքը նույն կերպ շարունակվում է,</text>
+<text class="n" x="36" y="483" >որովհետև shard-ը գրվում է .tmp-ի մեջ և ապա վերանվանվում է՝ կիսատ ֆայլ երբեք չի մնում։</text>
+</svg></div><figcaption>Ամեն ձայնագրություն (կամ նրա կտորը) գրում է իր shard-ը՝ կարգավորման մատնահետքով։ Նոր գործարկման ժամանակ <code>plan_tasks</code>-ը համեմատում է մատնահետքը․ նույն է՝ վերցնում է պատրաստին, այլ է՝ նորից հաշվում է միայն այդ ֆայլը։ Վերջում <code>merge_shards</code>-ը գումարում է բոլորը մեկ բազայի մեջ։</figcaption></figure></section>
+<section><h2>6. Մոդուլների կապերը</h2>
+<p>Սեղմեք մոդուլի վրա՝ կտեսնեք՝ ինչ է նա ներմուծում (կապույտ) և ով է նրան օգտագործում (կարմիր)։</p>
+<div class="fig" style="padding:6px"><figure style="margin:0"><div class="scroll"><svg viewBox="0 0 1000 594" role="group" aria-label="Մոդուլների կապերը՝ ով ում է ներմուծում" style="min-width:860px" xmlns="http://www.w3.org/2000/svg"><defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk" d="M0,1 L10,5 L0,9 z"/></marker><marker id="h6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-hi" d="M0,1 L10,5 L0,9 z"/></marker><marker id="o6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-out" d="M0,1 L10,5 L0,9 z"/></marker><marker id="i6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path class="mk-in" d="M0,1 L10,5 L0,9 z"/></marker></defs>
+<g id="dep">
+<path class="edge" data-from="__main__" data-to="cli" d="M500.0,64.0 C500.0,90.0 433.0,90.0 433.0,116.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="autoconfig" d="M479.1,228.0 C479.1,288.0 486.0,302.0 486.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="config" d="M504.2,228.0 C504.2,288.0 553.0,384.0 553.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="diagnostics" d="M520.9,228.0 C520.9,288.0 634.0,302.0 634.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="paths" d="M454.0,228.0 C454.0,288.0 246.0,466.0 246.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="pipeline" d="M487.5,228.0 C487.5,254.0 507.0,254.0 507.0,280.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="report" d="M537.6,228.0 C537.6,254.0 775.0,254.0 775.0,280.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="setupfile" d="M529.3,228.0 C529.3,254.0 627.0,254.0 627.0,280.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="sources" d="M470.7,228.0 C470.7,288.0 419.0,384.0 419.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="storage" d="M546.0,228.0 C546.0,288.0 768.0,466.0 768.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="tools" d="M462.4,228.0 C462.4,288.0 359.0,302.0 359.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyze" data-to="video" d="M495.8,228.0 C495.8,288.0 506.6,466.0 506.6,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyzers" data-to="lamp" d="M225.0,392.0 C225.0,418.0 285.0,418.0 285.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyzers" data-to="storage" d="M253.0,392.0 C253.0,452.0 740.0,466.0 740.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyzers" data-to="video" d="M239.0,392.0 C239.0,452.0 454.0,466.0 454.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="analyzers" data-to="zones" d="M211.0,392.0 C211.0,452.0 63.0,466.0 63.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="autoconfig" data-to="lamp" d="M493.0,392.0 C493.0,418.0 313.0,418.0 313.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="autoconfig" data-to="tracker" d="M507.0,392.0 C507.0,452.0 373.0,466.0 373.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="autoconfig" data-to="video" d="M521.0,392.0 C521.0,452.0 519.7,466.0 519.7,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="autoconfig" data-to="zones" d="M479.0,392.0 C479.0,452.0 119.0,466.0 119.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="analyze" d="M425.3,146.0 C425.3,172.0 493.0,172.0 493.0,198.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="config" d="M448.3,146.0 C448.3,206.0 539.0,384.0 539.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="paths" d="M394.7,146.0 C394.7,206.0 232.0,466.0 232.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="pipeline" d="M433.0,146.0 C433.0,206.0 493.0,220.0 493.0,280.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="report" d="M471.3,146.0 C471.3,206.0 761.0,220.0 761.0,280.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="sources" d="M417.7,146.0 C417.7,206.0 405.0,384.0 405.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="storage" d="M479.0,146.0 C479.0,206.0 754.0,466.0 754.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="tools" d="M402.3,146.0 C402.3,206.0 345.0,302.0 345.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="cli" data-to="video" d="M440.7,146.0 C440.7,206.0 480.3,466.0 480.3,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="config" data-to="schedule" d="M567.0,474.0 C567.0,500.0 888.0,500.0 888.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="diagnostics" data-to="sources" d="M627.0,392.0 C627.0,418.0 447.0,418.0 447.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="diagnostics" data-to="video" d="M641.0,392.0 C641.0,452.0 546.0,466.0 546.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="gui" data-to="sources" d="M768.0,392.0 C768.0,418.0 461.0,418.0 461.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="inactivity" data-to="analyzers" d="M232.0,310.0 C232.0,336.0 218.0,336.0 218.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="inactivity" data-to="zones" d="M218.0,310.0 C218.0,370.0 77.0,466.0 77.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="lamp" data-to="zones" d="M299.0,474.0 C299.0,500.0 91.0,500.0 91.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="metrics" data-to="schedule" d="M701.0,474.0 C701.0,500.0 902.0,500.0 902.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="pipeline" data-to="analyzers" d="M472.0,310.0 C472.0,336.0 246.0,336.0 246.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="pipeline" data-to="config" d="M514.0,310.0 C514.0,370.0 567.0,384.0 567.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="pipeline" data-to="storage" d="M542.0,310.0 C542.0,370.0 782.0,466.0 782.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="pipeline" data-to="tracker" d="M486.0,310.0 C486.0,370.0 387.0,466.0 387.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="pipeline" data-to="video" d="M500.0,310.0 C500.0,370.0 532.9,466.0 532.9,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="pipeline" data-to="zones" d="M458.0,310.0 C458.0,370.0 133.0,466.0 133.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="report" data-to="autoconfig" d="M740.0,310.0 C740.0,336.0 514.0,336.0 514.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="report" data-to="config" d="M754.0,310.0 C754.0,370.0 609.0,384.0 609.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="report" data-to="metrics" d="M768.0,310.0 C768.0,370.0 701.0,384.0 701.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="report" data-to="schedule" d="M796.0,310.0 C796.0,370.0 916.0,466.0 916.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="report" data-to="storage" d="M782.0,310.0 C782.0,370.0 796.0,466.0 796.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="setupfile" data-to="config" d="M641.0,310.0 C641.0,370.0 595.0,384.0 595.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="setupfile" data-to="tools" d="M627.0,310.0 C627.0,336.0 387.0,336.0 387.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="sources" data-to="video" d="M433.0,474.0 C433.0,500.0 493.4,500.0 493.4,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="tools" data-to="config" d="M394.0,392.0 C394.0,418.0 525.0,418.0 525.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="tools" data-to="lamp" d="M352.0,392.0 C352.0,418.0 299.0,418.0 299.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="tools" data-to="video" d="M380.0,392.0 C380.0,452.0 467.1,466.0 467.1,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="tools" data-to="zones" d="M338.0,392.0 C338.0,452.0 105.0,466.0 105.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="workpieces" data-to="analyzers" d="M359.0,310.0 C359.0,336.0 232.0,336.0 232.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="workpieces" data-to="tracker" d="M373.0,310.0 C373.0,370.0 359.0,466.0 359.0,526.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="zoneeditor" data-to="analyze" d="M560.0,146.0 C560.0,172.0 507.0,172.0 507.0,198.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="zoneeditor" data-to="autoconfig" d="M574.0,146.0 C574.0,206.0 500.0,302.0 500.0,362.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="zoneeditor" data-to="config" d="M588.0,146.0 C588.0,206.0 581.0,384.0 581.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="zoneeditor" data-to="setupfile" d="M602.0,146.0 C602.0,206.0 641.0,220.0 641.0,280.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="zoneeditor" data-to="sources" d="M546.0,146.0 C546.0,206.0 433.0,384.0 433.0,444.0" marker-end="url(#a6)"/>
+<path class="edge" data-from="zoneeditor" data-to="tools" d="M532.0,146.0 C532.0,206.0 373.0,302.0 373.0,362.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="analyze" data-to="detector" d="M512.5,228.0 C512.5,288.0 634.0,466.0 634.0,526.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="analyzers" data-to="inactivity" d="M225.0,362.0 C225.0,336.0 218.0,336.0 218.0,310.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="analyzers" data-to="workpieces" d="M239.0,362.0 C239.0,336.0 359.0,336.0 359.0,310.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="cli" data-to="detector" d="M456.0,146.0 C456.0,206.0 620.0,466.0 620.0,526.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="cli" data-to="gui" d="M463.7,146.0 C463.7,206.0 768.0,302.0 768.0,362.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="cli" data-to="inactivity" d="M387.0,146.0 C387.0,206.0 232.0,220.0 232.0,280.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="cli" data-to="workpieces" d="M410.0,146.0 C410.0,206.0 366.0,220.0 366.0,280.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="cli" data-to="zoneeditor" d="M433.0,116.0 C433.0,94.0 560.0,168.0 560.0,146.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="gui" data-to="zoneeditor" d="M768.0,362.0 C768.0,302.0 574.0,206.0 574.0,146.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="inactivity" data-to="paths" d="M246.0,310.0 C246.0,370.0 218.0,466.0 218.0,526.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="pipeline" data-to="detector" d="M528.0,310.0 C528.0,370.0 648.0,466.0 648.0,526.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="pipeline" data-to="inactivity" d="M493.0,280.0 C493.0,258.0 246.0,332.0 246.0,310.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="pipeline" data-to="workpieces" d="M507.0,280.0 C507.0,258.0 373.0,332.0 373.0,310.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="tools" data-to="analyzers" d="M359.0,362.0 C359.0,340.0 232.0,414.0 232.0,392.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="tools" data-to="inactivity" d="M373.0,362.0 C373.0,336.0 232.0,336.0 232.0,310.0" marker-end="url(#a6)"/>
+<path class="edge lazy" data-from="tools" data-to="tracker" d="M366.0,392.0 C366.0,452.0 345.0,466.0 345.0,526.0" marker-end="url(#a6)"/>
+<g class="mod process" data-id="zones" tabindex="0" role="button" aria-label="zones.py, 101 տող"><title>zones.py · 101 տող · գոտի, գիծ, շարժում, WORK/IDLE վիճակի պատուհան</title><rect x="40.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="98.0" y="545" text-anchor="middle">zones</text></g>
+<g class="mod orch" data-id="paths" tabindex="0" role="button" aria-label="paths.py, 25 տող"><title>paths.py · 25 տող · որտեղ են պահվում մոդելները</title><rect x="174.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="232.0" y="545" text-anchor="middle">paths</text></g>
+<g class="mod process" data-id="tracker" tabindex="0" role="button" aria-label="tracker.py, 99 տող"><title>tracker.py · 99 տող · հետևում կադրից կադր (IoU + արագություն)</title><rect x="308.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="366.0" y="545" text-anchor="middle">tracker</text></g>
+<g class="mod process" data-id="video" tabindex="0" role="button" aria-label="video.py, 77 տող"><title>video.py · 77 տող · վիդեո բացում, կլիպեր, ակտիվ ժամեր</title><rect x="442.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="500.0" y="545" text-anchor="middle">video</text></g>
+<g class="mod process" data-id="detector" tabindex="0" role="button" aria-label="detector.py, 59 տող"><title>detector.py · 59 տող · մարդկանց հայտնաբերում՝ YOLOX, ONNX Runtime</title><rect x="576.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="634.0" y="545" text-anchor="middle">detector</text></g>
+<g class="mod store" data-id="storage" tabindex="0" role="button" aria-label="storage.py, 135 տող"><title>storage.py · 135 տող · shard-եր -&gt; analytics.db</title><rect x="710.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="768.0" y="545" text-anchor="middle">storage</text></g>
+<g class="mod process" data-id="schedule" tabindex="0" role="button" aria-label="schedule.py, 38 տող"><title>schedule.py · 38 տող · աշխատանքային ժամեր և ընդմիջումներ</title><rect x="844.0" y="526" width="116" height="30" rx="7"/><text class="mono" x="902.0" y="545" text-anchor="middle">schedule</text></g>
+<g class="mod process" data-id="lamp" tabindex="0" role="button" aria-label="lamp.py, 68 տող"><title>lamp.py · 68 տող · ազդանշանային լամպի գույնը (HSV)</title><rect x="241.0" y="444" width="116" height="30" rx="7"/><text class="mono" x="299.0" y="463" text-anchor="middle">lamp</text></g>
+<g class="mod orch" data-id="sources" tabindex="0" role="button" aria-label="sources.py, 247 տող"><title>sources.py · 247 տող · ձայնագրությունների որոնում, տեսախցիկը և սկսելու ժամը՝ ֆայլի անունից</title><rect x="375.0" y="444" width="116" height="30" rx="7"/><text class="mono" x="433.0" y="463" text-anchor="middle">sources</text></g>
+<g class="mod setup" data-id="config" tabindex="0" role="button" aria-label="config.py, 190 տող"><title>config.py · 190 տող · լռելյայն արժեքներ և խիստ ստուգում</title><rect x="509.0" y="444" width="116" height="30" rx="7"/><text class="mono" x="567.0" y="463" text-anchor="middle">config</text></g>
+<g class="mod report" data-id="metrics" tabindex="0" role="button" aria-label="metrics.py, 63 տող"><title>metrics.py · 63 տող · բացակայություն, երկար պարապուրդներ</title><rect x="643.0" y="444" width="116" height="30" rx="7"/><text class="mono" x="701.0" y="463" text-anchor="middle">metrics</text></g>
+<g class="mod process" data-id="analyzers" tabindex="0" role="button" aria-label="analyzers.py, 361 տող"><title>analyzers.py · 361 տող · չափումները (գոտի, գիծ, հաստոց, հավաք) և ընդհանուր Ctx-ը</title><rect x="174.0" y="362" width="116" height="30" rx="7"/><text class="mono" x="232.0" y="381" text-anchor="middle">analyzers</text></g>
+<g class="mod util" data-id="tools" tabindex="0" role="button" aria-label="tools.py, 221 տող"><title>tools.py · 221 տող · խառը գործիքներ՝ snap, մոդելներ, կադրեր, COCO, probe</title><rect x="308.0" y="362" width="116" height="30" rx="7"/><text class="mono" x="366.0" y="381" text-anchor="middle">tools</text></g>
+<g class="mod setup" data-id="autoconfig" tabindex="0" role="button" aria-label="autoconfig.py, 266 տող"><title>autoconfig.py · 266 տող · ավտոմատ սովորում՝ կայաններ, հաստոցներ (լամպեր՝ միայն խնդրելիս)</title><rect x="442.0" y="362" width="116" height="30" rx="7"/><text class="mono" x="500.0" y="381" text-anchor="middle">autoconfig</text></g>
+<g class="mod orch" data-id="diagnostics" tabindex="0" role="button" aria-label="diagnostics.py, 392 տող"><title>diagnostics.py · 392 տող · ինչ է երևում ձայնագրություններում․ doctor և diagnostics.txt</title><rect x="576.0" y="362" width="116" height="30" rx="7"/><text class="mono" x="634.0" y="381" text-anchor="middle">diagnostics</text></g>
+<g class="mod entry" data-id="gui" tabindex="0" role="button" aria-label="gui.py, 438 տող"><title>gui.py · 438 տող · պատուհան (tkinter)․ վերլուծությունը գործարկում է առանձին պրոցեսով</title><rect x="710.0" y="362" width="116" height="30" rx="7"/><text class="mono" x="768.0" y="381" text-anchor="middle">gui</text></g>
+<g class="mod process opt" data-id="inactivity" tabindex="0" role="button" aria-label="inactivity.py, 179 տող"><title>inactivity.py · 179 տող · անշարժություն (կամընտիր՝ MediaPipe)</title><rect x="174.0" y="280" width="116" height="30" rx="7"/><text class="mono" x="232.0" y="299" text-anchor="middle">inactivity</text></g>
+<g class="mod process opt" data-id="workpieces" tabindex="0" role="button" aria-label="workpieces.py, 123 տող"><title>workpieces.py · 123 տող · նախապատրաստվածքների հաշվարկ (կամընտիր՝ RF-DETR)</title><rect x="308.0" y="280" width="116" height="30" rx="7"/><text class="mono" x="366.0" y="299" text-anchor="middle">workpieces</text></g>
+<g class="mod process" data-id="pipeline" tabindex="0" role="button" aria-label="pipeline.py, 157 տող"><title>pipeline.py · 157 տող · մեկ ձայնագրության կադրերի ցիկլը՝ ծրագրի սիրտը</title><rect x="442.0" y="280" width="116" height="30" rx="7"/><text class="mono" x="500.0" y="299" text-anchor="middle">pipeline</text></g>
+<g class="mod setup" data-id="setupfile" tabindex="0" role="button" aria-label="setupfile.py, 78 տող"><title>setupfile.py · 78 տող · cameras.auto.yaml-ի գրառում (նախ ստուգում), setup/*.jpg</title><rect x="576.0" y="280" width="116" height="30" rx="7"/><text class="mono" x="634.0" y="299" text-anchor="middle">setupfile</text></g>
+<g class="mod report" data-id="report" tabindex="0" role="button" aria-label="report.py, 617 տող"><title>report.py · 617 տող · HTML հաշվետվություն և CSV-ներ</title><rect x="710.0" y="280" width="116" height="30" rx="7"/><text class="mono" x="768.0" y="299" text-anchor="middle">report</text></g>
+<g class="mod orch" data-id="analyze" tabindex="0" role="button" aria-label="analyze.py, 387 տող"><title>analyze.py · 387 տող · վիդեո ներս -&gt; հաշվետվություն դուրս․ պլանավորում, զուգահեռ կատարում, doctor</title><rect x="442.0" y="198" width="116" height="30" rx="7"/><text class="mono" x="500.0" y="217" text-anchor="middle">analyze</text></g>
+<g class="mod entry" data-id="cli" tabindex="0" role="button" aria-label="cli.py, 384 տող"><title>cli.py · 384 տող · 13 հրաման՝ analyze, zones, doctor, gui, scan, run, report, ...</title><rect x="375.0" y="116" width="116" height="30" rx="7"/><text class="mono" x="433.0" y="135" text-anchor="middle">cli</text></g>
+<g class="mod setup" data-id="zoneeditor" tabindex="0" role="button" aria-label="zoneeditor.py, 563 տող"><title>zoneeditor.py · 563 տող · գոտիների ձեռքով նկարում՝ տրամաբանություն առանձին, պատուհան առանձին</title><rect x="509.0" y="116" width="116" height="30" rx="7"/><text class="mono" x="567.0" y="135" text-anchor="middle">zoneeditor</text></g>
+<g class="mod entry" data-id="__main__" tabindex="0" role="button" aria-label="__main__.py, 4 տող"><title>__main__.py · 4 տող · python -m videoanalytics կանչում է cli.main</title><rect x="442.0" y="34" width="116" height="30" rx="7"/><text class="mono" x="500.0" y="53" text-anchor="middle">__main__</text></g>
+</g>
+</svg></div><figcaption>Ամեն ուղղանկյուն ֆայլ է (գույնը՝ դերը, տե՛ս վերևի պայմանական նշանները)։ Սլաքը գնում է ներմուծողից դեպի ներմուծվածը։ Դիրքը՝ քանի շերտ մոդուլ կա նրա տակ․ ամենաներքևում ֆայլեր են, որոնք փաթեթի ուրիշ ոչ մի ֆայլ չեն ներմուծում։ Կետագծով սլաքը «ծույլ» ներմուծում է (ֆունկցիայի ներսում՝ միայն երբ պետք է)։ Սեղմեք կամ սլաքներով անցեք մոդուլի վրա։</figcaption></figure><div id="dep-info" aria-live="polite"></div></div></section>
+<footer>Տեքստային նկարագրությունը՝ <code>ARCHITECTURE.hy.md</code>։ Ներմուծումների գրաֆը կարդացվել է ավտոմատ (Python-ի <code>ast</code>-ով)․ մնացած գծապատկերները նկարված են ձեռքով և ստուգված կոդի հետ։</footer>
+</div>
+<script type="application/json" id="dep-data">{"__main__": {"role": "python -m videoanalytics կանչում է cli.main", "group": "entry", "lines": 4, "imports": ["cli"], "lazy": [], "used_by": [], "used_lazy": []}, "analyze": {"role": "վիդեո ներս -> հաշվետվություն դուրս․ պլանավորում, զուգահեռ կատարում, doctor", "group": "orch", "lines": 387, "imports": ["autoconfig", "config", "diagnostics", "paths", "pipeline", "report", "setupfile", "sources", "storage", "tools", "video"], "lazy": ["detector"], "used_by": ["cli", "zoneeditor"], "used_lazy": []}, "analyzers": {"role": "չափումները (գոտի, գիծ, հաստոց, հավաք) և ընդհանուր Ctx-ը", "group": "process", "lines": 361, "imports": ["lamp", "storage", "video", "zones"], "lazy": ["inactivity", "workpieces"], "used_by": ["inactivity", "pipeline", "workpieces"], "used_lazy": ["tools"]}, "autoconfig": {"role": "ավտոմատ սովորում՝ կայաններ, հաստոցներ (լամպեր՝ միայն խնդրելիս)", "group": "setup", "lines": 266, "imports": ["lamp", "tracker", "video", "zones"], "lazy": [], "used_by": ["analyze", "report", "zoneeditor"], "used_lazy": []}, "cli": {"role": "13 հրաման՝ analyze, zones, doctor, gui, scan, run, report, ...", "group": "entry", "lines": 384, "imports": ["analyze", "config", "paths", "pipeline", "report", "sources", "storage", "tools", "video"], "lazy": ["detector", "gui", "inactivity", "workpieces", "zoneeditor"], "used_by": ["__main__"], "used_lazy": []}, "config": {"role": "լռելյայն արժեքներ և խիստ ստուգում", "group": "setup", "lines": 190, "imports": ["schedule"], "lazy": [], "used_by": ["analyze", "cli", "pipeline", "report", "setupfile", "tools", "zoneeditor"], "used_lazy": []}, "detector": {"role": "մարդկանց հայտնաբերում՝ YOLOX, ONNX Runtime", "group": "process", "lines": 59, "imports": [], "lazy": [], "used_by": [], "used_lazy": ["analyze", "cli", "pipeline"]}, "diagnostics": {"role": "ինչ է երևում ձայնագրություններում․ doctor և diagnostics.txt", "group": "orch", "lines": 392, "imports": ["sources", "video"], "lazy": [], "used_by": ["analyze"], "used_lazy": []}, "gui": {"role": "պատուհան (tkinter)․ վերլուծությունը գործարկում է առանձին պրոցեսով", "group": "entry", "lines": 438, "imports": ["sources"], "lazy": ["zoneeditor"], "used_by": [], "used_lazy": ["cli"]}, "inactivity": {"role": "անշարժություն (կամընտիր՝ MediaPipe)", "group": "process", "lines": 179, "imports": ["analyzers", "zones"], "lazy": ["paths"], "used_by": [], "used_lazy": ["analyzers", "cli", "pipeline", "tools"]}, "lamp": {"role": "ազդանշանային լամպի գույնը (HSV)", "group": "process", "lines": 68, "imports": ["zones"], "lazy": [], "used_by": ["analyzers", "autoconfig", "tools"], "used_lazy": []}, "metrics": {"role": "բացակայություն, երկար պարապուրդներ", "group": "report", "lines": 63, "imports": ["schedule"], "lazy": [], "used_by": ["report"], "used_lazy": []}, "paths": {"role": "որտեղ են պահվում մոդելները", "group": "orch", "lines": 25, "imports": [], "lazy": [], "used_by": ["analyze", "cli"], "used_lazy": ["inactivity"]}, "pipeline": {"role": "մեկ ձայնագրության կադրերի ցիկլը՝ ծրագրի սիրտը", "group": "process", "lines": 157, "imports": ["analyzers", "config", "storage", "tracker", "video", "zones"], "lazy": ["detector", "inactivity", "workpieces"], "used_by": ["analyze", "cli"], "used_lazy": []}, "report": {"role": "HTML հաշվետվություն և CSV-ներ", "group": "report", "lines": 617, "imports": ["autoconfig", "config", "metrics", "schedule", "storage"], "lazy": [], "used_by": ["analyze", "cli"], "used_lazy": []}, "schedule": {"role": "աշխատանքային ժամեր և ընդմիջումներ", "group": "process", "lines": 38, "imports": [], "lazy": [], "used_by": ["config", "metrics", "report"], "used_lazy": []}, "setupfile": {"role": "cameras.auto.yaml-ի գրառում (նախ ստուգում), setup/*.jpg", "group": "setup", "lines": 78, "imports": ["config", "tools"], "lazy": [], "used_by": ["analyze", "zoneeditor"], "used_lazy": []}, "sources": {"role": "ձայնագրությունների որոնում, տեսախցիկը և սկսելու ժամը՝ ֆայլի անունից", "group": "orch", "lines": 247, "imports": ["video"], "lazy": [], "used_by": ["analyze", "cli", "diagnostics", "gui", "zoneeditor"], "used_lazy": []}, "storage": {"role": "shard-եր -> analytics.db", "group": "store", "lines": 135, "imports": [], "lazy": [], "used_by": ["analyze", "analyzers", "cli", "pipeline", "report"], "used_lazy": []}, "tools": {"role": "խառը գործիքներ՝ snap, մոդելներ, կադրեր, COCO, probe", "group": "util", "lines": 221, "imports": ["config", "lamp", "video", "zones"], "lazy": ["analyzers", "inactivity", "tracker"], "used_by": ["analyze", "cli", "setupfile", "zoneeditor"], "used_lazy": []}, "tracker": {"role": "հետևում կադրից կադր (IoU + արագություն)", "group": "process", "lines": 99, "imports": [], "lazy": [], "used_by": ["autoconfig", "pipeline", "workpieces"], "used_lazy": ["tools"]}, "video": {"role": "վիդեո բացում, կլիպեր, ակտիվ ժամեր", "group": "process", "lines": 77, "imports": [], "lazy": [], "used_by": ["analyze", "analyzers", "autoconfig", "cli", "diagnostics", "pipeline", "sources", "tools"], "used_lazy": []}, "workpieces": {"role": "նախապատրաստվածքների հաշվարկ (կամընտիր՝ RF-DETR)", "group": "process", "lines": 123, "imports": ["analyzers", "tracker"], "lazy": [], "used_by": [], "used_lazy": ["analyzers", "cli", "pipeline"]}, "zoneeditor": {"role": "գոտիների ձեռքով նկարում՝ տրամաբանություն առանձին, պատուհան առանձին", "group": "setup", "lines": 563, "imports": ["analyze", "autoconfig", "config", "setupfile", "sources", "tools"], "lazy": [], "used_by": [], "used_lazy": ["cli", "gui"]}, "zones": {"role": "գոտի, գիծ, շարժում, WORK/IDLE վիճակի պատուհան", "group": "process", "lines": 101, "imports": [], "lazy": [], "used_by": ["analyzers", "autoconfig", "inactivity", "lamp", "pipeline", "tools"], "used_lazy": []}}</script>
+<script>
+(function () {
+  var holder = document.getElementById('dep');
+  var info = document.getElementById('dep-info');
+  var raw = document.getElementById('dep-data');
+  if (!holder || !info || !raw) return;
+  var data = JSON.parse(raw.textContent);
+  var svg = holder.ownerSVGElement;
+  var mods = Array.prototype.slice.call(holder.querySelectorAll('.mod'));
+  var edges = Array.prototype.slice.call(holder.querySelectorAll('.edge'));
+  function pills(list, cls, lazy) {
+    return list.map(function (n) {
+      var s = document.createElement('span'); s.className = 'pill ' + cls + (lazy ? ' lz' : ''); s.textContent = n + '.py'; return s;
+    });
+  }
+  function row(label, nodes) {
+    var d = document.createElement('div'); d.className = 'row';
+    var k = document.createElement('span'); k.className = 'k'; k.textContent = label; d.appendChild(k);
+    if (!nodes.length) { var z = document.createElement('span'); z.className = 'k'; z.textContent = '-'; d.appendChild(z); }
+    nodes.forEach(function (n) { d.appendChild(n); });
+    return d;
+  }
+  function select(id) {
+    var m = data[id]; if (!m) return;
+    var imp = m.imports.concat(m.lazy), usd = m.used_by.concat(m.used_lazy);
+    svg.classList.add('sel-on');
+    mods.forEach(function (g) {
+      var n = g.getAttribute('data-id');
+      g.classList.toggle('sel', n === id);
+      g.classList.toggle('imp', imp.indexOf(n) >= 0);
+      g.classList.toggle('usd', usd.indexOf(n) >= 0);
+    });
+    edges.forEach(function (e) {
+      var a = e.getAttribute('data-from'), b = e.getAttribute('data-to');
+      var out = a === id, inn = b === id;
+      e.classList.toggle('out', out); e.classList.toggle('in', inn);
+      e.setAttribute('marker-end', 'url(#' + (out ? 'o' : inn ? 'i' : 'a') + '6)');
+    });
+    info.textContent = '';
+    var h = document.createElement('div');
+    var b = document.createElement('b'); b.textContent = id + '.py'; h.appendChild(b);
+    h.appendChild(document.createTextNode(' · ' + m.lines + ' տող · ' + m.role));
+    info.appendChild(h);
+    info.appendChild(row('ներմուծում է (' + imp.length + ')՝', pills(m.imports, '', false).concat(pills(m.lazy, '', true))));
+    info.appendChild(row('օգտագործվում է (' + usd.length + ')՝', pills(m.used_by, 'in', false).concat(pills(m.used_lazy, 'in', true))));
+  }
+  mods.forEach(function (g) {
+    var id = g.getAttribute('data-id');
+    g.addEventListener('click', function () { select(id); });
+    g.addEventListener('mouseenter', function () { select(id); });
+    g.addEventListener('focus', function () { select(id); });
+    g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); } });
+  });
+  select('pipeline');
+})();
+</script>
+</body></html>

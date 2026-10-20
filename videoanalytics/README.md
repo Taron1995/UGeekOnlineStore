@@ -1,6 +1,6 @@
 # videoanalytics - offline people, machine and workpiece analytics for multi-day CCTV footage
 
-Հայերեն՝ [README.hy.md](README.hy.md) · Code structure (in Armenian): [ARCHITECTURE.hy.md](ARCHITECTURE.hy.md)
+Հայերեն՝ [README.hy.md](README.hy.md) · Code structure (in Armenian): [ARCHITECTURE.hy.md](ARCHITECTURE.hy.md) · Diagrams: [docs/architecture.html](docs/architecture.html)
 
 Runs on recordings you already have (days of footage, many cameras), fully offline, camera-only (no machine sensors).
 
