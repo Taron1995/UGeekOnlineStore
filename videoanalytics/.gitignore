@@ -13,3 +13,27 @@ out/
 output/
 _analysis/
 *_analysis/
+# the recordings themselves (people on camera) and your own camera config must never reach a public repository, wherever you put them
+footage/
+recordings/
+cameras.yaml
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.m4v
+*.mpg
+*.mpeg
+*.mts
+*.m2ts
+*.ts
+*.webm
+*.wmv
+*.flv
+*.3gp
+*.asf
+*.dav
+*.264
+*.265
+*.h264
+*.h265
