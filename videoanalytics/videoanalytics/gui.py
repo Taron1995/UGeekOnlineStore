@@ -39,7 +39,8 @@ def python_exe() -> str:
     return str(exe)
 
 
-def build_command(paths, *, out=None, workers=None, relearn=False, python=None, doctor=False, one_camera=False, start=None, lamps=False) -> list[str]:
+def build_command(paths, *, out=None, workers=None, relearn=False, python=None, doctor=False, one_camera=False, start=None, lamps=False,
+                  hw_decode=False) -> list[str]:
     """doctor=True: the quick check of the recordings instead of the analysis."""
     cmd = [python or python_exe(), "-m", "videoanalytics", "doctor" if doctor else "analyze", *[os.path.abspath(p) for p in paths]]
     if not doctor:
@@ -52,6 +53,8 @@ def build_command(paths, *, out=None, workers=None, relearn=False, python=None, 
         cmd.append("--rediscover")
     if lamps and not doctor:
         cmd.append("--lamps")
+    if hw_decode and not doctor:
+        cmd.append("--hw-decode")
     if one_camera:
         cmd.append("--one-camera")
     if start:
@@ -135,7 +138,7 @@ class App:
         root.minsize(760, min(640, root.winfo_screenheight() - 120))
         self.out_var, self.workers_var, self.start_var = tk.StringVar(), tk.StringVar(value="0"), tk.StringVar()
         self.relearn_var, self.open_var, self.one_var = tk.BooleanVar(value=False), tk.BooleanVar(value=True), tk.BooleanVar(value=False)
-        self.lamps_var = tk.BooleanVar(value=False)
+        self.lamps_var, self.hw_var = tk.BooleanVar(value=False), tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose the recordings, then press Start.")
         self._layout()
         self.add_paths(paths)
@@ -179,6 +182,8 @@ class App:
         ttk.Spinbox(opt, from_=0, to=64, width=5, textvariable=self.workers_var).grid(row=4, column=2, sticky="e", pady=(4, 0))
         ttk.Checkbutton(opt, text="Open the report when it is finished", variable=self.open_var).grid(row=5, column=0, columnspan=3, sticky="w")
         ttk.Checkbutton(opt, text="My machines have signal lamps (look for them while learning)", variable=self.lamps_var).grid(row=6, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(opt, text="Use the graphics card to decode the video (faster for large recordings; see \"Check the videos first\")", variable=self.hw_var).grid(
+            row=7, column=0, columnspan=3, sticky="w")
 
         run = ttk.Frame(f)
         run.grid(row=4, column=0, sticky="ew")
@@ -297,7 +302,8 @@ class App:
         except ValueError:
             workers = 0
         cmd = self.build(self.paths, out=self.out_var.get().strip() or None, workers=workers or None, relearn=self.relearn_var.get(),
-                         doctor=doctor, one_camera=self.one_var.get(), start=start or None, lamps=self.lamps_var.get())
+                         doctor=doctor, one_camera=self.one_var.get(), start=start or None, lamps=self.lamps_var.get(),
+                         hw_decode=self.hw_var.get())
         self.report, self.saved, self.stopping, self.mode = None, None, False, "check" if doctor else "analyze"
         self._set_log("")
         try:

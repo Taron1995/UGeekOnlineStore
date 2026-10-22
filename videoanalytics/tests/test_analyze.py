@@ -7,7 +7,7 @@ import yaml
 from tests.test_autoconfig import draw_lamps
 from tests.test_features import make_video
 from videoanalytics import analyze as an
-from videoanalytics.analyze import analyze, cameras_summary, ensure_model, estimate, fingerprint, plan_tasks, resolve_inputs, split_segments
+from videoanalytics.analyze import analyze, cameras_summary, ensure_model, estimate, fingerprint, plan_tasks, resolve_inputs, split_segments, time_split
 from videoanalytics.config import DEFAULTS, check_config, normalize_camera
 from videoanalytics.sources import auto_camera_name, discover_auto
 from videoanalytics.storage import shard_path, write_shard
@@ -38,12 +38,21 @@ def test_one_video_in_report_out(tmp_path, capsys):
     assert (out / "setup" / "cam1.jpg").exists() and (out / "setup" / "setup.json").exists()
     text = capsys.readouterr().out
     assert "Learning the scene" in text and "2 station(s)" in text and f"REPORT: {report}" in text
+    assert "frames detected" in text and "reading the video" in text  # each finished job says where its time went
     html = report.read_text(encoding="utf-8")
     assert "cam1" in html and "lamp1" in html and "spot1" in html
     diag = (out / "diagnostics.txt").read_text(encoding="utf-8")  # what to send if something looks wrong
     assert "== Computer" in diag and "== Samples" in diag and "== Result" in diag and "learned 2 station(s)" in diag and "speed of this run" in diag
     assert "cam1: setup used: 2 station(s), 0 other zone(s), 0 processing section(s), 0 moving machine zone(s), 1 signal lamp(s), 0 tracking area(s)" in diag
     assert f"Diagnostics (send this file if something looks wrong): {out / 'diagnostics.txt'}" in text
+
+
+def test_the_log_line_of_a_job_says_where_its_time_went():
+    r = dict(elapsed_s=100.0, t_read=68.0, t_detect=21.0, t_analyze=2.0, t_clips=4.0)
+    assert time_split(r) == " [reading the video 68 %, detector and tracker 21 %, evidence clips 4 %]"  # 2 % is not worth a word
+    assert time_split(dict(r, elapsed_s=0.0)) == "" and time_split({"elapsed_s": 50.0}) == ""  # nothing measured (a shard of an older run)
+    assert time_split(dict(elapsed_s=100.0, t_read=1.0, t_detect=1.0, t_analyze=1.0, t_clips=0.0)) == ""
+    assert time_split(dict(elapsed_s=10.0, t_read=0.3, t_detect=0.0, t_analyze=0.0, t_clips=0.0)) == " [reading the video 3 %]"  # exactly 3 % counts
 
 
 def test_second_run_reuses_the_setup_and_finished_work(tmp_path, capsys):

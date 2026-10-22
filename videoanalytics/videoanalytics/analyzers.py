@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +33,7 @@ class Ctx:
     zone_fine: dict = field(default_factory=dict)  # (zone, 5 s bin) -> [covered_s, occupied_s]
     machine_fine: dict = field(default_factory=dict)  # (machine, 5 s bin) -> [work_s, idle_s]
     n_clips: int = 0
+    t_clips: float = 0.0  # seconds spent saving evidence (frame + clip)
     t_start: float = 0.0  # start of the current pass (file-relative seconds)
     frame: np.ndarray | None = None
     h: int = 0
@@ -65,6 +67,7 @@ class Ctx:
         if not self.opts["clips"] or self.out_dir is None or self.n_clips >= self.opts["max_clips_per_file"]:
             return "", ""
         self.n_clips += 1
+        started = time.perf_counter()
         base = f"clips/{self.src['camera']}/{fmt_ts(self.abs_t)}_{re.sub(r'[^A-Za-z0-9_-]+', '_', label)}"
         (self.out_dir / base).parent.mkdir(parents=True, exist_ok=True)
         img = self.frame.copy()
@@ -73,6 +76,7 @@ class Ctx:
         cv2.imwrite(str(self.out_dir / (base + ".jpg")), cv2.resize(img, (480, max(1, int(self.h * 480 / self.w)))))
         save_clip(self.src["path"], self.t if t_center is None else t_center, self.out_dir / (base + ".mp4"),
                   self.opts["clip_pad_s"], self.opts["hw_decode"])
+        self.t_clips += time.perf_counter() - started
         return base + ".mp4", base + ".jpg"
 
 

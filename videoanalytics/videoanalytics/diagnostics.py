@@ -22,6 +22,7 @@ from .video import active_intervals, fmt_ts, open_capture
 RECORDER_EXT = {".dav", ".h264", ".264", ".h265", ".265", ".asf", ".bin", ".rec"}
 SAME_SCENE, DIFFERENT_SCENE = 0.85, 0.30  # correlation of 64x36 grey thumbnails: above = looks like the same view, below = hardly related
 SLOW_DECODE_FPS = 15.0
+HW_WORTH = 1.4  # the graphics card is worth recommending when it decodes this many times faster than the processor
 
 
 def _dur(seconds: float) -> str:
@@ -54,6 +55,27 @@ def similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float((a * b).sum())
 
 
+def decode_rate(path: str, hw: bool, frames: int = 40, warmup: int = 5):
+    """(frames per second, was the graphics card really used?) when reading the first frames; (None, False) when that is not possible.
+    A card that is asked for but not there is not an error: the video library quietly decodes on the processor, and says so."""
+    cap = open_capture(path, hw)
+    try:
+        if not cap.isOpened():
+            return None, False
+        used = bool(hw and cap.get(cv2.CAP_PROP_HW_ACCELERATION) > 0)
+        for _ in range(warmup):  # the first frames pay for starting the decoder
+            cap.read()
+        n, t0 = 0, time.perf_counter()
+        for _ in range(frames):
+            if not cap.read()[0]:
+                break
+            n += 1
+        dt = time.perf_counter() - t0
+        return (n / dt if n and dt > 0 else None), used
+    finally:
+        cap.release()
+
+
 def inspect_file(path: str, frames: int = 20) -> dict:
     """What OpenCV (with its bundled FFmpeg) makes of one recording: format, size, how fast it decodes and seeks, how the picture looks."""
     info: dict = dict(path=path, opened=False)
@@ -78,6 +100,9 @@ def inspect_file(path: str, frames: int = 20) -> dict:
         if first is None:
             info["error"] = "opens, but no frame can be decoded (unsupported codec or a damaged file)"
             return info
+        sw, _ = decode_rate(path, False)
+        hw, used = decode_rate(path, True)
+        info.update(sw_fps=sw, hw_fps=hw if used else None, hw_used=used)  # the same measure for both, so that they can be compared
         shown = first
         if info["frame_count"] > 60:  # the scene learning and the chunks seek into the file
             t0 = time.perf_counter()
@@ -197,12 +222,22 @@ def camera_lines(srcs: list[dict], hours=None, limit: int = 12) -> list[str]:
     return lines
 
 
+def hardware_text(s: dict) -> str:
+    """', graphics card decodes 412 fps (3.1x)' / ', no graphics-card decoding here' / '' (not measured)."""
+    if "hw_used" not in s:
+        return ""
+    if not s["hw_used"] or not s.get("hw_fps"):
+        return ", no graphics-card decoding here"
+    sw = s.get("sw_fps")
+    return f", graphics card decodes {s['hw_fps']:.0f} fps" + (f" ({s['hw_fps'] / sw:.1f}x)" if sw else "")
+
+
 def sample_line(s: dict) -> str:
     if not s.get("opened") or s.get("error"):
         return f"  {s['camera']:12} {s['rel']}: {s.get('error', 'cannot be opened')}"
     seek = "" if "seek_s" not in s else (f", seek {s['seek_s']:.1f} s" if s["seek_ok"] else ", SEEK FAILS")
     return (f"  {s['camera']:12} {s['rel']}: {s['codec']} {s['width']}x{s['height']} at {s['fps']:.1f} fps, {_dur(s['duration'])}, "
-            f"decodes {s['decode_fps']:.0f} fps{seek}, brightness {s['brightness']:.0f}/255, coloured pixels {s['coloured']:.1f}%")
+            f"decodes {s['decode_fps']:.0f} fps{seek}{hardware_text(s)}, brightness {s['brightness']:.0f}/255, coloured pixels {s['coloured']:.1f}%")
 
 
 def issue_hints(issues: dict, files_seen: Counter | None = None) -> list[str]:
@@ -297,6 +332,10 @@ def sample_hints(samples: list[dict]) -> list[str]:
         if s["decode_fps"] and s["decode_fps"] < SLOW_DECODE_FPS:
             notes.append(f"{where}: decoding runs at only {s['decode_fps']:.0f} frames per second ({s['codec']}, {s['width']}x{s['height']}); "
                          f"expect a long run. --hw-decode may help; so may --hours.")
+        if s.get("hw_used") and s.get("hw_fps") and s.get("sw_fps") and s["hw_fps"] >= HW_WORTH * s["sw_fps"]:
+            notes.append(f"{where}: the graphics card decodes this recording {s['hw_fps'] / s['sw_fps']:.1f} times faster than the processor "
+                         f"({s['hw_fps']:.0f} against {s['sw_fps']:.0f} frames per second). The analysis reads EVERY frame of the video, so on large recordings decoding "
+                         f"is most of the time: tick \"Use the graphics card to decode the video\" in the window (or add --hw-decode). Work that is already finished stays valid.")
         if s["coloured"] < 0.2:
             notes.append(f"{where}: the picture has almost no colour (night / infrared mode?). People are still found; the colour of signal lamps, if you use them, cannot be read.")
         if s["width"] < 480:

@@ -9,6 +9,7 @@ from videoanalytics.analyzers import CycleCounter, SegmentTracker, largest_group
 from videoanalytics.config import ConfigError, check_config, normalize_camera
 from videoanalytics.lamp import LampReader
 from videoanalytics.pipeline import DEFAULTS, process_video
+from videoanalytics.video import save_clip
 from videoanalytics.schedule import Schedule
 from videoanalytics.sources import naive_epoch
 from videoanalytics.tracker import Track
@@ -181,6 +182,44 @@ def test_gathering_evidence_files(tmp_path):
     out = tmp_path / "out"
     (g,) = gather_events(tmp_path, TWO_CLOSE, clips=True, out=out)
     assert (out / g[4]).stat().st_size > 0 and (out / g[5]).exists()
+
+
+def test_a_job_says_where_its_time_went(tmp_path, monkeypatch):
+    import time
+    from videoanalytics import analyzers
+    v = tmp_path / "t.mp4"
+    make_video(v, 20, lambda f, t: None)
+    people = people_for(12, TWO_CLOSE)
+    slow_detector = lambda frame: (time.sleep(0.004), people(frame))[1]  # 4 ms per sampled frame: 60 frames = 0.24 s
+    update = analyzers.GatheringAnalyzer.update
+    monkeypatch.setattr(analyzers.GatheringAnalyzer, "update", lambda self, ctx: (time.sleep(0.002), update(self, ctx))[1])  # 2 ms per frame = 0.12 s
+    _, _, meta = process_video(src(v, 20), dict(gathering={"min_duration_s": 5, "gap_s": 2}), opts(clips=True), slow_detector, tmp_path / "out")
+    assert meta["t_read"] > 0 and meta["t_detect"] >= 0.2 and meta["t_analyze"] >= 0.1
+    assert meta["t_clips"] > 0  # a gathering was found: saving its evidence took time, and it is counted apart from the analyzers
+    assert meta["t_read"] + meta["t_detect"] + meta["t_analyze"] + meta["t_clips"] <= meta["elapsed_s"] + 0.05  # the parts never add up to more than the whole job
+
+
+def test_evidence_clips_are_scaled_down_but_small_pictures_are_left_alone(tmp_path, monkeypatch):
+    big, small = tmp_path / "big.mp4", tmp_path / "small.mp4"
+    writer = cv2.VideoWriter(str(big), cv2.VideoWriter_fourcc(*"mp4v"), 10, (1920, 1080))
+    for i in range(30):
+        writer.write(np.full((1080, 1920, 3), 60 + i, np.uint8))
+    writer.release()
+    make_video(small, 3, lambda f, t: None)
+    for path, expected in ((big, (960, 540)), (small, SIZE)):  # 1080p becomes 960x540 (a quarter of the pixels); 320x180 stays as it is
+        out = tmp_path / f"{path.stem}_clip.mp4"
+        save_clip(str(path), 1.0, out, 0.5)
+        cap = cv2.VideoCapture(str(out))
+        assert (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))) == expected and cap.read()[0]
+    odd = tmp_path / "odd.mp4"
+    writer = cv2.VideoWriter(str(odd), cv2.VideoWriter_fourcc(*"mp4v"), 10, (1000, 562))
+    for i in range(20):
+        writer.write(np.full((562, 1000, 3), 80, np.uint8))
+    writer.release()
+    asked, real = [], cv2.VideoWriter
+    monkeypatch.setattr(cv2, "VideoWriter", lambda *a, **k: (asked.append(a[3]), real(*a, **k))[1])  # what size the clip is asked for
+    save_clip(str(odd), 1.0, tmp_path / "odd_clip.mp4", 0.5)
+    assert asked == [(960, 538)]  # 562 x 0.96 = 539.5: both sides even, because some encoders refuse odd ones
 
 
 def test_largest_group_and_segments():

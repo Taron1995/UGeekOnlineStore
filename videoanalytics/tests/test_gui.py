@@ -26,6 +26,8 @@ def test_command_for_the_check_and_for_camera_options(tmp_path):
     run = build_command(["x.mp4"], python="py", one_camera=True, start="2026-10-01 08:30")
     assert run[3] == "analyze" and "--one-camera" in run and "--start" in run and "--no-open" in run and "--lamps" not in run
     assert "--lamps" in build_command(["x.mp4"], python="py", lamps=True) and "--lamps" not in build_command(["x.mp4"], python="py", lamps=True, doctor=True)
+    assert "--hw-decode" in build_command(["x.mp4"], python="py", hw_decode=True) and "--hw-decode" not in build_command(["x.mp4"], python="py")
+    assert "--hw-decode" not in build_command(["x.mp4"], python="py", hw_decode=True, doctor=True)  # the check tries the card itself
 
 
 def test_output_lines_are_understood():
@@ -215,7 +217,17 @@ def test_camera_options_reach_the_command(root):
     app.workers_var.set("3")
     app.start()
     assert wait(root, lambda: app.job is None)
-    assert seen == [dict(out=None, workers=3, relearn=False, doctor=False, one_camera=True, start="2026-10-01 08:30", lamps=False)]
+    assert seen == [dict(out=None, workers=3, relearn=False, doctor=False, one_camera=True, start="2026-10-01 08:30", lamps=False, hw_decode=False)]
+
+
+def test_the_graphics_card_option_reaches_the_command(root):
+    seen = []
+    app = gui.App(root, build=recording("pass", seen))
+    app.add_paths(["clip.mp4"])
+    app.hw_var.set(True)
+    app.start()
+    assert wait(root, lambda: app.job is None)
+    assert seen[0]["hw_decode"] is True and seen[0]["lamps"] is False
 
 
 @pytest.mark.parametrize("screen_h", [1080, 768, 720])

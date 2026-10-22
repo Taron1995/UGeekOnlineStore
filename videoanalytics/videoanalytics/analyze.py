@@ -140,6 +140,17 @@ class Runner:
             self.pool.join()
 
 
+def time_split(r: dict) -> str:
+    """Where one job's time went, e.g. ' [reading 68 %, detector 21 %, evidence clips 4 %]'. Only what takes 3 % or more is named; empty when the job
+    did not measure it (shards of older runs)."""
+    el = r.get("elapsed_s") or 0.0
+    if el <= 0 or "t_read" not in r:
+        return ""
+    parts = [("reading the video", r["t_read"]), ("detector and tracker", r["t_detect"]), ("analyzers", r["t_analyze"]), ("evidence clips", r["t_clips"])]
+    shown = [f"{name} {100 * v / el:.0f} %" for name, v in parts if v / el >= 0.03]
+    return f" [{', '.join(shown)}]" if shown else ""
+
+
 def _eta(done: int, total: int, t0: float) -> str:
     if done < 1 or done >= total:
         return ""
@@ -167,7 +178,7 @@ def run_analysis(cams, opts, srcs, out: Path, model, workers, *, limit_files=Non
             for i, r in enumerate(rn.imap(pipeline.run_task, tasks), 1):
                 if r["ok"]:
                     print(f"[{i}/{len(tasks)}] {r['source']}: {r['processed_s']:.0f}s video, {r['det_frames']}/{r['frames']} frames detected, "
-                          f"{r['elapsed_s']:.0f}s{_eta(i, len(tasks), t0)}", flush=True)
+                          f"{r['elapsed_s']:.0f}s{time_split(r)}{_eta(i, len(tasks), t0)}", flush=True)
                 else:
                     errors.append(r)
                     print(f"[{i}/{len(tasks)}] ERROR {r['source']}: {r['error']}", flush=True)

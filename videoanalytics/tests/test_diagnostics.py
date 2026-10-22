@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 
 import cv2
+import numpy as np
 import pytest
 
 from tests.test_features import make_video
@@ -68,6 +69,68 @@ def test_a_grey_scene_with_a_small_coloured_lamp_is_not_a_night_picture(tmp_path
     assert lamp["coloured"] > 0.2 > grey["coloured"]  # the lamp keeps the colour readable; a flat grey picture does not
     notes = [n for n in dg.sample_hints([{**lamp, "camera": "a", "rel": "lamp.mp4"}, {**grey, "camera": "b", "rel": "grey.mp4"}]) if "no colour" in n]
     assert len(notes) == 1 and notes[0].startswith("b (grey.mp4)") and "infrared" in notes[0]
+
+
+def test_decode_rate_of_a_real_file_and_of_a_missing_one(tmp_path):
+    p = clip(tmp_path / "a.mp4", 4)
+    rate, used = dg.decode_rate(str(p), False)
+    assert rate and rate > 0 and used is False
+    rate, used = dg.decode_rate(str(p), True)  # a graphics card may or may not be there: either way the file is read, and the answer says which
+    assert rate and rate > 0 and isinstance(used, bool)
+    assert dg.decode_rate(str(tmp_path / "missing.mp4"), False) == (None, False)
+
+
+class FakeCapture:
+    """A video that opens and gives 60 frames; `accel` is what the library says about the acceleration it really got (0 = none)."""
+
+    def __init__(self, accel):
+        self.accel, self.n = accel, 0
+
+    def isOpened(self):
+        return True
+
+    def get(self, prop):
+        return self.accel if prop == cv2.CAP_PROP_HW_ACCELERATION else 0.0
+
+    def read(self):
+        self.n += 1
+        return self.n <= 60, np.zeros((4, 4, 3), np.uint8)
+
+    def release(self):
+        pass
+
+
+def test_decode_rate_says_whether_the_card_was_really_used(monkeypatch):
+    monkeypatch.setattr(dg, "open_capture", lambda path, hw=False: FakeCapture(2.0 if hw else 0.0))  # the card works (D3D11 = 2)
+    assert dg.decode_rate("x", True)[1] is True and dg.decode_rate("x", False)[1] is False  # asked for the processor: never "card"
+    monkeypatch.setattr(dg, "open_capture", lambda path, hw=False: FakeCapture(0.0))  # asked for the card, the library quietly used the processor
+    rate, used = dg.decode_rate("x", True)
+    assert used is False and rate and rate > 0
+    monkeypatch.setattr(dg, "open_capture", lambda path, hw=False: FakeCapture(2.0))
+    assert dg.decode_rate("x", True, frames=100)[0] is not None  # fewer frames than asked for are fine: the rate is of those that came
+    short = FakeCapture(2.0)
+    short.n = 58  # only two frames left: not even the warm-up can be finished
+    monkeypatch.setattr(dg, "open_capture", lambda path, hw=False: short)
+    assert dg.decode_rate("x", True) == (None, True)
+
+
+def test_the_graphics_card_is_compared_with_the_processor(tmp_path, monkeypatch):
+    p = clip(tmp_path / "a.mp4", 4)
+    monkeypatch.setattr(dg, "decode_rate", lambda path, hw, **kw: (900.0, True) if hw else (200.0, False))
+    info = dg.inspect_file(str(p))
+    assert (info["sw_fps"], info["hw_fps"], info["hw_used"]) == (200.0, 900.0, True)
+    where = dict(camera="c", rel="a.mp4", duration=4.0)
+    assert "graphics card decodes 900 fps (4.5x)" in dg.sample_line({**info, **where})
+    note = " ".join(dg.sample_hints([{**info, **where}]))
+    assert "4.5 times faster" in note and "--hw-decode" in note and "Use the graphics card to decode the video" in note and "stays valid" in note
+    monkeypatch.setattr(dg, "decode_rate", lambda path, hw, **kw: (200.0, False))  # no card, or the library fell back to the processor
+    info = dg.inspect_file(str(p))
+    assert info["hw_used"] is False and info["hw_fps"] is None and "no graphics-card decoding here" in dg.sample_line({**info, **where})
+    assert not [n for n in dg.sample_hints([{**info, **where}]) if "graphics card" in n]
+    slightly = dict(info, hw_used=True, hw_fps=250.0, sw_fps=200.0)  # 1.25 times: not worth recommending
+    assert not [n for n in dg.sample_hints([{**slightly, **where}]) if "graphics card" in n]
+    exactly = dict(info, hw_used=True, hw_fps=280.0, sw_fps=200.0)  # exactly 1.4 times is
+    assert [n for n in dg.sample_hints([{**exactly, **where}]) if "graphics card" in n]
 
 
 def test_sample_notes_for_odd_files():

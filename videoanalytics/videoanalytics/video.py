@@ -61,17 +61,20 @@ def open_capture(path: str, hw: bool = False):
     return cap
 
 
-def save_clip(path: str, t_rel: float, out_path: Path, pad: float, hw: bool = False):
+def save_clip(path: str, t_rel: float, out_path: Path, pad: float, hw: bool = False, max_w: int = 960):
+    """The clip around an event. Pictures wider than max_w are scaled down: at 1080p / 4K a clip of the original size is tens of MB and takes
+    seconds to encode, and 39 jobs of 10 clips each fill a disk."""
     cap = open_capture(path, hw)
     fps = cap.get(cv2.CAP_PROP_FPS)
     fps = fps if 1 <= fps <= 120 else 25.0
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    size = (w, h) if w <= max_w else (max_w // 2 * 2, int(h * max_w / w) // 2 * 2)  # even numbers: some encoders refuse odd sides
     cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_rel - pad) * 1000)
-    out = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    out = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, size)
     for _ in range(int(2 * pad * fps)):
         ok, f = cap.read()
         if not ok:
             break
-        out.write(f)
+        out.write(f if (w, h) == size else cv2.resize(f, size, interpolation=cv2.INTER_AREA))
     out.release()
     cap.release()

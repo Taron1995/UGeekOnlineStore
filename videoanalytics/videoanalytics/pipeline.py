@@ -49,6 +49,7 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
     areas = [(Zone(a["name"], a["polygon"]), a.get("mode", "watch")) for a in cam.get("areas") or []]
     ctx = Ctx(src, cam, opts, out_dir)
     st = dict(frames=0, det_frames=0, processed_s=0.0)
+    pc, t_read, t_detect, t_analyze = time.perf_counter, 0.0, 0.0, 0.0  # reading = decoding every frame of the file, the biggest cost on large recordings
 
     intervals = active_intervals(src["start_ts"], src["duration"], opts["active_hours"])
     seg = src.get("seg")  # (start_s, end_s): one chunk of a long recording, processed by its own worker
@@ -66,7 +67,10 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
         ctx.t_start, ctx.motion, ctx.occupied, ctx.zone_counts = a, motion, {}, {}
         seen, last_det, t_rel = set(), -1e9, a
         while limit_s is None or st["processed_s"] < limit_s:
-            if not cap.grab():
+            tm = pc()
+            got = cap.grab()
+            t_read += pc() - tm
+            if not got:
                 break
             fi += 1
             if (fi - 1) % step:
@@ -74,25 +78,30 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
             t_rel = (fi - 1) / src_fps
             if t_rel >= b:
                 break
+            tm = pc()
             ok, frame = cap.retrieve()
+            t_read += pc() - tm
             if not ok:
                 continue
             ctx.frame, ctx.t, ctx.abs_t, ctx.dt = frame, t_rel, src["start_ts"] + t_rel, dt
             ctx.h, ctx.w = frame.shape[:2]
             fm = motion.step(frame)
-            detected = 0
+            detected, tm = 0, pc()
             if fm > opts["gate_motion"] or tracker.tracks or t_rel - last_det >= opts["keepalive_s"]:
                 ctx.tracks = tracker.update(keep_in_areas(detect(frame), areas, frame.shape[1], frame.shape[0]))
                 last_det, detected = t_rel, 1
             else:
                 ctx.tracks = []  # quiet scene and nobody tracked: skip the expensive detector
             ctx.alive = {t.id for t in tracker.tracks}
+            t_detect += pc() - tm
             for tr in ctx.tracks:
                 if tr.id not in seen:
                     seen.add(tr.id)
                     ctx.emit("person_appeared", f"t{tr.id}")
+            tm = pc()
             for az in analyzers:
                 az.update(ctx)
+            t_analyze += pc() - tm
             row = ctx.minutes.setdefault(ctx.minute(), [0.0, 0.0, 0, 0])
             row[0] += dt
             row[1] += dt * len(ctx.tracks)
@@ -106,12 +115,15 @@ def process_video(src: dict, cam: dict, opts: dict, detect, out_dir: Path | None
             st["det_frames"] += detected
             st["processed_s"] += dt
         ctx.t, ctx.abs_t = t_rel, src["start_ts"] + t_rel
+        tm = pc()
         for az in analyzers:
             az.finish(ctx)
+        t_analyze += pc() - tm
     cap.release()
     meta = dict(camera=src["camera"], source=src["rel"] + (f"#{int(seg[0])}-{int(seg[1])}" if seg else ""), start_ts=src["start_ts"], video_s=src["duration"],
                 processed_s=round(st["processed_s"], 1), frames=st["frames"], det_frames=st["det_frames"],
-                elapsed_s=round(time.time() - t0, 2))
+                elapsed_s=round(time.time() - t0, 2), t_read=round(t_read, 2), t_detect=round(t_detect, 2),
+                t_analyze=round(max(0.0, t_analyze - ctx.t_clips), 2), t_clips=round(ctx.t_clips, 2))
     tables = dict(minutes=ctx.minutes, zone_minutes=ctx.zone_minutes, machine_minutes=ctx.machine_minutes,
                   fine=ctx.fine, zone_fine=ctx.zone_fine, machine_fine=ctx.machine_fine)
     return ctx.events, tables, meta

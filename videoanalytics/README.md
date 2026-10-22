@@ -239,6 +239,24 @@ Levers, biggest first: `--hours` (only working hours), `--fps`, the motion gate 
 trusting it), `--hw-decode` (D3D11VA/VAAPI via OpenCV; not tested here), more workers or a GPU box. `models --yolox-s` gives a more accurate person
 detector for small people (284 ms vs 82 ms per frame, 3.5x).
 
+### If it is slow: where the time goes
+
+The analysis *looks at* 3 frames per second, but it has to **read (decode) every frame** of the file, 25 per second. On large recordings (2-8 megapixels,
+H.265) decoding on the processor is most of the time and the detector is the smaller part. Every finished job prints where its time went, e.g.
+`[8/39] ...: 1123s video, 3157/3209 frames detected, 3019s [reading the video 71 %, detector and tracker 19 %, evidence clips 4 %]`
+(only parts of 3 % or more are named). Then:
+
+* **"reading the video" is the big part** - let the graphics card decode. "Check the videos first" (`doctor`) measures it for each recording
+  (`graphics card decodes 412 fps (3.1x)`) and recommends it when it is at least 1.4 times faster than the processor: tick "Use the graphics card to decode the
+  video" in the window, or add `--hw-decode`. Work that is already finished stays valid (the way of decoding is not part of the setup fingerprint). If the line says
+  `no graphics-card decoding here`, the video library quietly decodes on the processor: ask the recorder for a lower-resolution stream, or analyse fewer hours.
+* **the detector is the big part** - `--fps 2` (a third less detector work), `--workers N` (as many as the computer has physical cores; more only heats a laptop
+  up). Both `--fps` and `--hours` change what is computed, so what was done before is computed again.
+* `--hours 8-20` (working hours only). Analyse one or two recordings first, draw the zones, then run the rest.
+* **evidence clips** are scaled to at most 960 px wide (they used to have the size of the recording: about 20 MB for 10 s at 1080p, and every job saves up
+  to 10). `--no-clips` skips them (computes again what was done with them).
+* A laptop needs power, the "best performance" mode and no other heavy programs: it halves its speed when it gets hot.
+
 ## What was verified, and what was not
 
 Verified (synthetic video with known answers, plus the OpenCV sample `vtest.avi`, 768x576 pedestrians):
