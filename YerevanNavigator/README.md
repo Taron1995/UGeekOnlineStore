@@ -2,6 +2,22 @@
 
 Հեռախոսի համար նավիգատոր՝ Երևանի քարտեզով։ Աշխատում է որպես վեբ-հավելված (PWA) — տեղադրում App Store / Play Market պետք չէ, բավական է բացել բրաուզերում և «Ավելացնել գլխավոր էկրանին»։
 
+## 📱 Ներբեռնել Android-ի համար (Redmi, Xiaomi, Samsung…)
+
+**[⬇ YerevanNavigator.apk](https://github.com/Taron1995/UGeekOnlineStore/releases/latest/download/YerevanNavigator.apk)**
+
+1. Բացեք հղումը հեռախոսի բրաուզերում, ներբեռնեք `YerevanNavigator.apk`
+2. Բացեք ֆայլը։ Redmi/MIUI-ն կհարցնի «Թույլատրել տեղադրումն այս աղբյուրից» → **Թույլատրել**
+   (եթե Play Protect-ը զգուշացնի՝ «Ավելին» → «Տեղադրել, միևնույն է»)
+3. Գործարկեք, թույլ տվեք **Տեղորոշում → Ճշգրիտ (Precise)**
+4. Քարտեզը, որոնումը և երթուղին արդեն APK-ի մեջ են — **ինտերնետ ընդհանրապես պետք չէ**
+
+Redmi-ի խորհուրդներ՝ Կարգավորումներ → Հավելվածներ → Երևան Նավիգատոր → Մարտկոց → **Առանց սահմանափակման**,
+և միացրեք GPS-ը «Բարձր ճշգրտություն» ռեժիմում։
+
+APK-ն կառուցվում է ավտոմատ GitHub Actions-ում (`.github/workflows/yerevan-navigator.yml`),
+Android նախագիծը՝ `android/` պանակում (WebView, որի մեջ է ամբողջ հավելվածը և Երևանի տվյալները)։
+
 ## 📴 Աշխատում է առանց ինտերնետի
 Ինտերնետ պետք է **միայն առաջին բացման ժամանակ**, երբ Երևանի քարտեզը պահվում է հեռախոսում։ Դրանից հետո ամեն ինչ աշխատում է հեռախոսի ներսում.
 
@@ -25,9 +41,9 @@
 
 ## Քարտեզի տվյալները
 `data/` պանակի ֆայլերը ստեղծվում են OpenStreetMap-ից `tools/build-offline-data.mjs` սկրիպտով։
-GitHub Actions-ը (`.github/workflows/yerevan-offline-data.yml`) այն գործարկում է ավտոմատ՝
+GitHub Actions-ը (`.github/workflows/yerevan-navigator.yml`) այն գործարկում է ավտոմատ՝
 սկրիպտը փոխելիս և ամիսը մեկ անգամ (քարտեզը թարմ պահելու համար), և պահպանում արդյունքը ռեպոզիտորիայում։
-Ձեռքով՝ GitHub → Actions → «Yerevan Navigator offline data» → Run workflow, կամ ինտերնետով համակարգչում՝
+Ձեռքով՝ GitHub → Actions → «Yerevan Navigator» → Run workflow (refresh map), կամ ինտերնետով համակարգչում՝
 ```bash
 node YerevanNavigator/tools/build-offline-data.mjs
 ```

@@ -332,7 +332,9 @@ const fmtDist = m => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' կմ
 const fmtTime = s => { const min = Math.round(s / 60); return min < 60 ? `${Math.max(1, min)} րոպե` : `${Math.floor(min / 60)} ժ ${min % 60} ր`; };
 
 function speak(t) {
-  if (!S.voice || !('speechSynthesis' in window)) return;
+  if (!S.voice) return;
+  if (window.AndroidApp) { AndroidApp.speak(t); return; } // Android app: system text-to-speech
+  if (!('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(t); u.lang = 'hy-AM';
   const v = speechSynthesis.getVoices().find(v => v.lang.startsWith('hy'));
@@ -388,4 +390,5 @@ async function lockScreen() {
 setFollow(true);
 initOffline();
 startGps();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+// inside the Android app everything is already in the APK — no service worker needed
+if ('serviceWorker' in navigator && !window.AndroidApp) navigator.serviceWorker.register('sw.js').catch(() => {});

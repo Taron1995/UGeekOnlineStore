@@ -1,0 +1,49 @@
+plugins { id 'com.android.application' }
+
+// The web app (../..) is copied into the APK, so the whole navigator incl. the Yerevan map works offline.
+def webDir = file("$projectDir/../..")
+tasks.register('copyWebApp', Sync) {
+    from(webDir) {
+        include 'index.html', 'style.css', 'app.js', 'offline.js', 'manifest.json', 'icon.svg', 'vendor/**', 'data/**'
+    }
+    into "$buildDir/generated/webassets/www"
+}
+
+android {
+    namespace 'am.yerevan.navigator'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'am.yerevan.navigator'
+        minSdk 24
+        targetSdk 34
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int)
+        versionName "1.${System.getenv('GITHUB_RUN_NUMBER') ?: '0'}"
+    }
+    signingConfigs {
+        // Fixed key kept in the repo so new versions install over old ones (sideloaded app, not for a store).
+        release {
+            storeFile file('navigator.keystore')
+            storePassword 'yerevan-navigator'
+            keyAlias 'navigator'
+            keyPassword 'yerevan-navigator'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    sourceSets {
+        main.assets.srcDirs += "$buildDir/generated/webassets"
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+preBuild.dependsOn copyWebApp
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

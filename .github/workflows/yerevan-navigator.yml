@@ -1,0 +1,93 @@
+name: Yerevan Navigator
+
+# 1) data: downloads Yerevan from OpenStreetMap and builds the offline map/routing/search
+#    files in YerevanNavigator/data (skipped on push when the data already exists).
+# 2) apk:  builds the Android app with everything inside and publishes it as a release, so
+#    https://github.com/<owner>/<repo>/releases/latest/download/YerevanNavigator.apk
+#    always points to the newest version.
+on:
+  push:
+    paths:
+      - 'YerevanNavigator/**'
+      - '.github/workflows/yerevan-navigator.yml'
+  workflow_dispatch:
+    inputs:
+      refresh_map:
+        description: 'Download fresh map data from OpenStreetMap'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 3 1 * *'   # monthly map refresh
+
+permissions:
+  contents: write
+
+concurrency:
+  group: yerevan-navigator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide
+        id: need
+        run: |
+          if [ ! -f YerevanNavigator/data/roads.json ] || [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.refresh_map }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.need.outputs.build == 'true'
+        with:
+          node-version: 20
+      - name: Build offline data from OpenStreetMap
+        if: steps.need.outputs.build == 'true'
+        run: node --max-old-space-size=6144 YerevanNavigator/tools/build-offline-data.mjs
+      - name: Commit data
+        if: steps.need.outputs.build == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add YerevanNavigator/data
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Update Yerevan offline map data from OpenStreetMap"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+  apk:
+    needs: data
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}   # latest commit, including fresh data from the job above
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build APK
+        working-directory: YerevanNavigator/android
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Rename
+        run: cp YerevanNavigator/android/app/build/outputs/apk/release/app-release.apk YerevanNavigator.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YerevanNavigator-apk
+          path: YerevanNavigator.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: navigator-v1.${{ github.run_number }}
+          name: Երևան Նավիգատոր 1.${{ github.run_number }}
+          target_commitish: ${{ github.ref_name }}
+          make_latest: 'true'
+          files: YerevanNavigator.apk
+          body: |
+            Android հավելված՝ Երևանի offline քարտեզով և նավիգացիայով։
+            Ներբեռնեք `YerevanNavigator.apk`, բացեք հեռախոսում և թույլ տվեք տեղադրումը։
