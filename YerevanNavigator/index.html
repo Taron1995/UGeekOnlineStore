@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="hy">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1565c0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Երևան Նավիգատոր</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="top">
+  <div id="searchBox">
+    <input id="search" type="search" placeholder="Որոնել հասցե Երևանում…" autocomplete="off">
+    <button id="clearBtn" title="Մաքրել">✕</button>
+  </div>
+  <ul id="results"></ul>
+  <div id="modes">
+    <button data-mode="car" class="active">🚗 Մեքենա</button>
+    <button data-mode="foot">🚶 Ոտքով</button>
+    <button data-mode="bike">🚲 Հեծանիվ</button>
+  </div>
+</div>
+
+<div id="instruction" hidden>
+  <div id="instrIcon">⬆</div>
+  <div>
+    <div id="instrDist"></div>
+    <div id="instrText"></div>
+  </div>
+</div>
+
+<div id="fabs">
+  <button id="voiceBtn" class="fab" title="Ձայն">🔊</button>
+  <button id="locateBtn" class="fab" title="Իմ դիրքը">◎</button>
+</div>
+
+<div id="panel" hidden>
+  <div id="summary"></div>
+  <div id="panelBtns">
+    <button id="startBtn" class="primary">▶ Սկսել</button>
+    <button id="stopBtn">✕ Չեղարկել</button>
+  </div>
+</div>
+
+<div id="status">Սպասում ենք GPS-ին…</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
