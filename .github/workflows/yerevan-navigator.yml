@@ -53,8 +53,13 @@ jobs:
           git add YerevanNavigator/data
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Update Yerevan offline map data from OpenStreetMap"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            # the branch moved (e.g. another run already pushed data): rebase, or use the data already there
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase FETCH_HEAD || { git rebase --abort; git reset --hard FETCH_HEAD; }
+            test -f YerevanNavigator/data/roads.json
+            git push origin "HEAD:${GITHUB_REF_NAME}" || true
+          fi
 
   apk:
     needs: data
