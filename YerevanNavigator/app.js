@@ -346,7 +346,7 @@ function speak(t) {
 async function startNav() {
   if (!S.route) return;
   S.navigating = true; document.body.classList.add('navigating');
-  setFollow(true); map.setZoom(17);
+  setFollow(true); if (S.pos) map.setView(S.pos, 17); else map.setZoom(17);
   startCompass();
   await lockScreen();
   if (S.rawPos) updateGuidance(locateOnRoute(S.rawPos));

@@ -163,6 +163,29 @@ const Offline = (() => {
     return best;
   }
 
+  // Largest connected part of the network for a mode. Start/end points snap only onto it,
+  // so a route never starts on an isolated piece (e.g. a path reachable only by stairs).
+  const comps = {};
+  function mainComponent(mode) {
+    if (comps[mode]) return comps[mode];
+    const comp = new Int32Array(D.N).fill(-1), bit = MODE_BIT[mode], stack = [];
+    let best = -1, bestSize = 0, id = 0;
+    for (let s0 = 0; s0 < D.N; s0++) {
+      if (comp[s0] !== -1) continue;
+      let size = 0; comp[s0] = id; stack.push(s0);
+      while (stack.length) {
+        const u = stack.pop(); size++;
+        for (let e = D.eStart[u]; e < D.eStart[u + 1]; e++) {
+          const v = D.eTo[e];
+          if (comp[v] === -1 && (D.wFlags[D.eWay[e]] & bit)) { comp[v] = id; stack.push(v); }
+        }
+      }
+      if (size > bestSize) { bestSize = size; best = id; }
+      id++;
+    }
+    return (comps[mode] = { comp, id: best });
+  }
+
   // binary heap keyed by f
   class Heap {
     constructor() { this.k = []; this.v = []; }
@@ -192,7 +215,8 @@ const Offline = (() => {
   let G, PE, ST, stamp = 0;
   function route(from, to, mode) {
     if (!D.N) return null;
-    const filt = w => !!(D.wFlags[w] & MODE_BIT[mode]);
+    const main = mainComponent(mode);
+    const filt = w => !!(D.wFlags[w] & MODE_BIT[mode]) && main.comp[D.wRefs[w][0]] === main.id;
     const S = nearestSeg(from[0], from[1], filt), T = nearestSeg(to[0], to[1], filt);
     if (!S || !T) return null;
     if (!G || G.length < D.N) { G = new Float64Array(D.N); PE = new Int32Array(D.N); ST = new Int32Array(D.N); }
@@ -308,7 +332,8 @@ const Offline = (() => {
       const d = bin === null || bout === null ? 0 : ((bout - bin + 540) % 360) - 180;
       const mod = modifier(d), nIn = nameOf(win), nOut = nameOf(wout);
       const choice = options(nodes[i], mode) > 2;
-      if (mod !== 'straight' && (choice || nIn !== nOut)) {
+      const minor = !nOut && Math.abs(d) < 60; // gentle bends onto unnamed paths/sidewalks are not worth a prompt
+      if (mod !== 'straight' && !minor && (choice || nIn !== nOut)) {
         steps.push({ name: nOut, maneuver: { type: 'turn', modifier: mod, location: loc(i) }, idx: i });
       } else if (nOut && nIn !== nOut && choice) {
         steps.push({ name: nOut, maneuver: { type: 'new name', modifier: 'straight', location: loc(i) }, idx: i });
