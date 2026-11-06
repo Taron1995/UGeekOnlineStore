@@ -28,9 +28,27 @@ const S = {
 const map = L.map('map', {
   zoomControl: false, maxBounds: YEREVAN_BOUNDS.pad(0.5), minZoom: 11, maxZoom: 19,
 }).setView(YEREVAN_CENTER, 13);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const onlineTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, attribution: '© OpenStreetMap',
-}).addTo(map);
+});
+
+// Offline mode: map, search and routing work from data stored on the phone.
+// If the offline data is missing, the app falls back to online services.
+async function initOffline() {
+  const bar = $('loadBar'), box = $('loading');
+  try {
+    box.hidden = false;
+    await Offline.load('data/', f => { bar.style.width = Math.round(f * 100) + '%'; $('loadPct').textContent = Math.round(f * 100) + '%'; });
+    const offlineLayer = Offline.mapLayer().addTo(map);
+    L.control.layers({ 'Քարտեզ (offline)': offlineLayer, 'OSM (ինտերնետով)': onlineTiles }, null, { position: 'bottomleft' }).addTo(map);
+    const d = new Date(Offline.meta.built);
+    $('netBadge').textContent = '📴 Offline քարտեզ ' + d.toLocaleDateString('hy-AM');
+  } catch (e) {
+    console.warn('offline data not available', e);
+    onlineTiles.addTo(map);
+    $('netBadge').textContent = '🌐 Online ռեժիմ';
+  } finally { box.hidden = true; }
+}
 
 const meIcon = L.divIcon({ className: 'me-icon', iconSize: [40, 40], iconAnchor: [20, 20],
   html: '<div class="me-rot" style="position:relative;width:40px;height:40px"><div class="me-cone"></div><div class="me-dot"></div></div>' });
@@ -125,6 +143,7 @@ function onPosition(p) {
   if (!S.navigating) status(`GPS ճշգրտություն՝ ±${Math.round(accuracy)} մ`);
 }
 function onGeoError(e) {
+  if (e.code !== 1 && S.lastFixTime && Date.now() - S.lastFixTime < 15000) return; // a short gap — keep last fix
   const msg = { 1: 'Թույլ տվեք տեղորոշումը բրաուզերի կարգավորումներում', 2: 'GPS ազդանշան չկա', 3: 'GPS-ը չպատասխանեց' }[e.code] || e.message;
   status('⚠ ' + msg);
 }
@@ -166,8 +185,19 @@ $('search').addEventListener('input', e => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
   if (q.length < 3) { $('results').innerHTML = ''; return; }
+  if (Offline.ready) { searchTimer = setTimeout(() => showResults(Offline.search(q, S.pos)), 150); return; }
   searchTimer = setTimeout(() => search(q), 600); // Nominatim policy: max 1 req/s
 });
+function showResults(list) {
+  const ul = $('results'); ul.innerHTML = '';
+  if (!list.length) { ul.innerHTML = '<li>Ոչինչ չգտնվեց</li>'; return; }
+  for (const r of list) {
+    const li = document.createElement('li');
+    li.innerHTML = `${esc(r.name)}<small>${esc(r.sub)}</small>`;
+    li.onclick = () => { ul.innerHTML = ''; $('search').value = r.name; $('search').blur(); setDest([r.lat, r.lon], r.name); };
+    ul.appendChild(li);
+  }
+}
 async function search(q) {
   searchAbort?.abort(); searchAbort = new AbortController();
   const b = YEREVAN_BOUNDS;
@@ -175,23 +205,19 @@ async function search(q) {
     `&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}&q=${encodeURIComponent(q)}`;
   try {
     const data = await (await fetch(url, { signal: searchAbort.signal })).json();
-    const ul = $('results'); ul.innerHTML = '';
-    if (!data.length) { ul.innerHTML = '<li>Ոչինչ չգտնվեց</li>'; return; }
-    for (const r of data) {
-      const li = document.createElement('li');
+    showResults(data.map(r => {
       const [name, ...rest] = r.display_name.split(', ');
-      li.innerHTML = `${esc(name)}<small>${esc(rest.slice(0, 3).join(', '))}</small>`;
-      li.onclick = () => { $('results').innerHTML = ''; $('search').value = name; $('search').blur(); setDest([+r.lat, +r.lon], name); };
-      ul.appendChild(li);
-    }
+      return { name, sub: rest.slice(0, 3).join(', '), lat: +r.lat, lon: +r.lon };
+    }));
   } catch (e) { if (e.name !== 'AbortError') status('Որոնումը ձախողվեց — ստուգեք ինտերնետը'); }
 }
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 $('clearBtn').onclick = () => { $('search').value = ''; $('results').innerHTML = ''; stopNav(true); };
 
 // long-press / tap on map sets destination
-map.on('contextmenu', e => setDest([e.latlng.lat, e.latlng.lng], 'Նշված կետ'));
-map.on('click', e => { if (!S.route && !S.navigating) setDest([e.latlng.lat, e.latlng.lng], 'Նշված կետ'); });
+const pointName = ll => (Offline.ready && Offline.nearestName(ll[0], ll[1])) || 'Նշված կետ';
+map.on('contextmenu', e => setDest([e.latlng.lat, e.latlng.lng], pointName([e.latlng.lat, e.latlng.lng])));
+map.on('click', e => { if (!S.route && !S.navigating) setDest([e.latlng.lat, e.latlng.lng], pointName([e.latlng.lat, e.latlng.lng])); });
 map.on('dragstart', () => setFollow(false));
 
 function setDest(ll, name) {
@@ -206,6 +232,15 @@ async function buildRoute(isReroute) {
   if (!S.pos) { status('Սպասում ենք ձեր դիրքին՝ երթուղի կառուցելու համար…'); setTimeout(() => buildRoute(isReroute), 2000); return; }
   S.lastReroute = Date.now(); S.offRouteCount = 0;
   const from = S.rawPos || S.pos;
+  if (Offline.ready) {
+    const t0 = performance.now();
+    const r = Offline.route(from, S.dest, S.mode);
+    if (!r) { status('Երթուղի չգտնվեց'); return; }
+    setRoute(r);
+    console.log(`offline route ${Math.round(r.distance)} m in ${Math.round(performance.now() - t0)} ms`);
+    if (!isReroute) map.fitBounds(routeLine.getBounds(), { padding: [60, 60] });
+    return;
+  }
   let url = `${ROUTERS[S.mode]}${from[1]},${from[0]};${S.dest[1]},${S.dest[0]}?overview=full&geometries=geojson&steps=true`;
   // when driving, prefer a route continuing in the current direction of travel
   if (S.mode === 'car' && S.heading !== null && S.speed > 2) url += `&bearings=${Math.round(S.heading)},45;`;
@@ -351,5 +386,6 @@ async function lockScreen() {
 }
 
 setFollow(true);
+initOffline();
 startGps();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -8,7 +8,7 @@
 <title>Երևան Նավիգատոր</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -49,8 +49,19 @@
 </div>
 
 <div id="status">Սպասում ենք GPS-ին…</div>
+<div id="netBadge"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<div id="loading" hidden>
+  <div class="loadCard">
+    <div>Երևանի քարտեզը բեռնվում է հեռախոսում…</div>
+    <div class="loadTrack"><div id="loadBar"></div></div>
+    <div id="loadPct">0%</div>
+    <small>Միայն առաջին անգամ է պետք ինտերնետ։ Հետո ամեն ինչ աշխատում է առանց ինտերնետի։</small>
+  </div>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="offline.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
