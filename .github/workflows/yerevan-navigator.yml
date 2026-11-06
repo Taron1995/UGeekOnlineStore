@@ -44,7 +44,18 @@ jobs:
           node-version: 20
       - name: Build offline data from OpenStreetMap
         if: steps.need.outputs.build == 'true'
-        run: node --max-old-space-size=6144 YerevanNavigator/tools/build-offline-data.mjs
+        run: |
+          set -e
+          # Fast path: Armenia extract from Geofabrik, cut to Yerevan with osmium
+          if sudo apt-get install -y osmium-tool >/dev/null &&
+             curl -fL --retry 3 -o armenia.osm.pbf https://download.geofabrik.de/asia/armenia-latest.osm.pbf; then
+            osmium extract -b 44.35,40.05,44.64,40.26 --strategy=smart armenia.osm.pbf -o yerevan.osm.pbf -O
+            osmium cat yerevan.osm.pbf -f opl,add_metadata=false -o yerevan.opl -O
+            node --max-old-space-size=6144 YerevanNavigator/tools/build-offline-data.mjs --opl yerevan.opl
+          else
+            # Fallback: Overpass API
+            node --max-old-space-size=6144 YerevanNavigator/tools/build-offline-data.mjs
+          fi
       - name: Commit data
         if: steps.need.outputs.build == 'true'
         run: |

@@ -4,6 +4,7 @@
  *
  *   node tools/build-offline-data.mjs                 # downloads from Overpass API (needs internet)
  *   node tools/build-offline-data.mjs --input x.json  # uses an already downloaded Overpass JSON
+ *   node tools/build-offline-data.mjs --opl x.opl     # uses an osmium OPL extract (see readOpl)
  *
  * Output (YerevanNavigator/data/):
  *   roads.json   – road network: drawn on the map and used for offline routing
@@ -54,7 +55,7 @@ out geom qt;`;
 // ---------------------------------------------------------------- download
 async function download() {
   let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     for (const url of ENDPOINTS) {
       try {
         console.log(`Downloading from ${url} …`);
@@ -62,7 +63,7 @@ async function download() {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'YerevanNavigator-offline-build/1.0' },
           body: 'data=' + encodeURIComponent(QUERY),
-          signal: AbortSignal.timeout(20 * 60 * 1000),
+          signal: AbortSignal.timeout(8 * 60 * 1000),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
         const json = await res.json();
@@ -76,6 +77,53 @@ async function download() {
     await new Promise(r => setTimeout(r, 30000 * (attempt + 1)));
   }
   throw lastErr;
+}
+
+// ---------------------------------------------------------------- OPL input (osmium)
+// Faster and more reliable than Overpass for a whole city:
+//   osmium extract -b W,S,E,N armenia-latest.osm.pbf -o yerevan.pbf --strategy=smart
+//   osmium cat yerevan.pbf -f opl,add_metadata=false -o yerevan.opl
+// Converted into the same shape as an Overpass "out geom" answer.
+function readOpl(file) {
+  const unesc = s => s.replace(/%([0-9a-fA-F]+)%/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+  const parseTags = s => {
+    const t = {}; if (!s) return t;
+    for (const kv of s.split(',')) { const i = kv.indexOf('='); if (i > 0) t[unesc(kv.slice(0, i))] = unesc(kv.slice(i + 1)); }
+    return t;
+  };
+  const nodes = new Map(), ways = new Map(), elements = [];
+  const rels = [];
+  const text = fs.readFileSync(file, 'utf8');
+  let pos = 0;
+  while (pos < text.length) {
+    let end = text.indexOf('\n', pos); if (end < 0) end = text.length;
+    const line = text.slice(pos, end); pos = end + 1;
+    if (!line) continue;
+    const f = {}; const parts = line.split(' ');
+    for (let i = 1; i < parts.length; i++) f[parts[i][0]] = parts[i].slice(1);
+    const id = Number(parts[0].slice(1));
+    if (line[0] === 'n') {
+      const lon = Number(f.x), lat = Number(f.y);
+      nodes.set(id, { lat, lon });
+      if (f.T) elements.push({ type: 'node', id, lat, lon, tags: parseTags(f.T) });
+    } else if (line[0] === 'w') {
+      const refs = f.N ? f.N.split(',').map(r => Number(r.slice(1))) : [];
+      const w = { type: 'way', id, nodes: refs, tags: parseTags(f.T) };
+      ways.set(id, w);
+      if (f.T) elements.push(w);
+    } else if (line[0] === 'r') {
+      const members = f.M ? f.M.split(',').map(m => { const at = m.indexOf('@'); return { type: m[0] === 'w' ? 'way' : m[0] === 'n' ? 'node' : 'relation', ref: Number(m.slice(1, at)), role: unesc(m.slice(at + 1)) }; }) : [];
+      rels.push({ type: 'relation', id, members, tags: parseTags(f.T) });
+    }
+  }
+  const geom = refs => refs.map(r => nodes.get(r) || null);
+  for (const w of ways.values()) w.geometry = geom(w.nodes);
+  for (const r of rels) {
+    if (r.tags.type !== 'multipolygon') continue;
+    for (const m of r.members) if (m.type === 'way' && ways.has(m.ref)) m.geometry = ways.get(m.ref).geometry;
+    elements.push(r);
+  }
+  return { elements };
 }
 
 // ---------------------------------------------------------------- helpers
@@ -258,7 +306,9 @@ function buildPlaces(elements, streetInfo) {
 async function main() {
   const inArg = process.argv.indexOf('--input');
   let osm;
-  if (inArg > 0) osm = JSON.parse(fs.readFileSync(process.argv[inArg + 1], 'utf8'));
+  const oplArg = process.argv.indexOf('--opl');
+  if (oplArg > 0) osm = readOpl(process.argv[oplArg + 1]);
+  else if (inArg > 0) osm = JSON.parse(fs.readFileSync(process.argv[inArg + 1], 'utf8'));
   else {
     osm = await download();
     if (process.argv.includes('--save-raw')) fs.writeFileSync(path.join(HERE, 'overpass-raw.json'), JSON.stringify(osm));
