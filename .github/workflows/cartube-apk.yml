@@ -7,6 +7,9 @@ on:
       - ".github/workflows/cartube-apk.yml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,10 +28,27 @@ jobs:
         with:
           gradle-version: "8.14.3"
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Build APK
+        run: |
+          gradle assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk CarTube.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: CarTube-apk
-          path: CarTube/app/build/outputs/apk/debug/*.apk
+          path: CarTube/CarTube.apk
+
+      # Public download link (no GitHub login needed):
+      # https://github.com/<owner>/<repo>/releases/latest/download/CarTube.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cartube-build-${{ github.run_number }}
+          name: CarTube (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          make_latest: "true"
+          files: CarTube/CarTube.apk
+          body: |
+            CarTube — YouTube Android Auto-ում։
+            Ներբեռնեք CarTube.apk-ը, տեղադրեք, հետո Android Auto → Developer settings → միացրեք «Unknown sources»։
+            ⚠ Դիտեք միայն կայանված ժամանակ։
